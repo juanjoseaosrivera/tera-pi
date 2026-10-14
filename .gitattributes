@@ -1,0 +1,8 @@
+# Finales de línea LF en el repositorio y en la copia de trabajo:
+# el código se ejecuta en Linux (VPS) y un CRLF rompe scripts y configuraciones.
+* text=auto eol=lf
+
+# Scripts de Windows sí necesitan CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
