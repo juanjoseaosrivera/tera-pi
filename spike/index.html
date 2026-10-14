@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tera-pi · prueba del spike</title>
+<!--
+  Página mínima para el spike del ADR-001. NO es el frontend: solo sirve para comprobar el
+  circuito completo (backend → signed URL → agente → server tools → webhook).
+
+  Cómo usarla (el micrófono solo funciona en https o en localhost):
+    cd backend
+    uv run python -m http.server 4200 --bind 127.0.0.1 -d ../spike
+  y abre http://localhost:4200. El backend debe tener http://localhost:4200 en CORS_ORIGINS.
+-->
+<style>
+  :root { color-scheme: light dark; --bg:#f7f7f5; --fg:#1d1d1b; --muted:#6b6b66; --card:#fff; --line:#deded8; --accent:#2f6f5e; --danger:#b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161615; --fg:#ececea; --muted:#9a9a94; --card:#20201e; --line:#33332f; --accent:#6fbfa8; --danger:#f2b8b5; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, sans-serif; }
+  main { max-width:720px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.4rem; margin:0 0 4px; }
+  p.note { color:var(--muted); margin:0 0 20px; font-size:.9rem; }
+  form { display:grid; gap:12px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  label { display:grid; gap:4px; font-size:.85rem; color:var(--muted); }
+  input { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  button { font:inherit; padding:8px 16px; border-radius:8px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; }
+  button.secondary { background:transparent; color:var(--accent); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  #status { font-size:.9rem; color:var(--muted); }
+  #log { margin-top:16px; display:grid; gap:8px; }
+  .msg { padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); white-space:pre-wrap; overflow-wrap:anywhere; }
+  .msg small { display:block; color:var(--muted); font-size:.75rem; }
+  .tool { border-style:dashed; font-family:ui-monospace, monospace; font-size:.8rem; }
+  .error { border-color:var(--danger); color:var(--danger); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tera-pi · prueba del spike</h1>
+  <p class="note">Herramienta interna. Las sesiones son reales: quedan guardadas en la base de datos y consumen minutos de ElevenLabs.</p>
+
+  <form id="form">
+    <label>URL del backend
+      <input id="api" value="https://api.tera-pi.pygmalion.cloud" required>
+    </label>
+    <label>Email (debe estar en DEV_AUTH_ALLOWED_EMAILS)
+      <input id="email" type="email" required autocomplete="email">
+    </label>
+    <label>Token de prueba (DEV_AUTH_TOKEN; no se guarda)
+      <input id="token" type="password" autocomplete="off" required>
+    </label>
+    <div class="row">
+      <button id="start" type="submit">Empezar sesión</button>
+      <button id="stop" type="button" class="secondary" disabled>Terminar</button>
+      <span id="status">Sin conectar</span>
+    </div>
+  </form>
+
+  <div id="log" aria-live="polite"></div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.26.0/dist/lib.iife.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let conversation = null;
+
+  try { $("email").value = localStorage.getItem("terapi-spike-email") || ""; } catch {}
+
+  function log(text, kind = "", meta = "") {
+    const div = document.createElement("div");
+    div.className = "msg " + kind;
+    if (meta) { const s = document.createElement("small"); s.textContent = meta; div.append(s); }
+    div.append(text);
+    $("log").append(div);
+    div.scrollIntoView({ block: "end" });
+  }
+
+  function setRunning(running) {
+    $("start").disabled = running;
+    $("stop").disabled = !running;
+  }
+
+  $("form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const api = $("api").value.replace(/\/$/, "");
+    const email = $("email").value.trim();
+    try { localStorage.setItem("terapi-spike-email", email); } catch {}
+    setRunning(true);
+    $("status").textContent = "Pidiendo la sesión al backend…";
+
+    try {
+      // 1. Pedir permiso de micrófono antes de nada: si se deniega, no gastamos una sesión.
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      // 2. El backend crea la sesión y devuelve la signed URL y la memoria.
+      const response = await fetch(api + "/api/sesiones", {
+        method: "POST",
+        headers: { "X-Dev-User-Email": email, "X-Dev-Token": $("token").value },
+      });
+      if (!response.ok) throw new Error(`Backend: ${response.status} ${await response.text()}`);
+      const { session_id, signed_url, dynamic_variables } = await response.json();
+      log(JSON.stringify(dynamic_variables, null, 2), "tool", `Sesión ${session_id} · variables dinámicas`);
+
+      // 3. Abrir la conversación con el agente privado.
+      conversation = await ElevenLabsClient.Conversation.startSession({
+        signedUrl: signed_url,
+        dynamicVariables: dynamic_variables,
+        onConnect: ({ conversationId }) => { $("status").textContent = "Conectado · " + conversationId; },
+        onDisconnect: () => { $("status").textContent = "Desconectado"; setRunning(false); conversation = null; },
+        onModeChange: ({ mode }) => { $("status").textContent = mode === "speaking" ? "Tera habla…" : "Escuchando…"; },
+        onMessage: ({ message, source }) => log(message, "", source === "ai" ? "Tera" : "Tú"),
+        onAgentToolResponse: (r) => log(JSON.stringify(r, null, 2), r.is_error ? "tool error" : "tool", "Herramienta: " + r.tool_name),
+        onError: (message) => log(String(message), "error", "Error"),
+      });
+    } catch (error) {
+      log(String(error.message || error), "error", "Error");
+      $("status").textContent = "Error";
+      setRunning(false);
+    }
+  });
+
+  $("stop").addEventListener("click", async () => {
+    if (conversation) await conversation.endSession();
+  });
+</script>
+</body>
+</html>

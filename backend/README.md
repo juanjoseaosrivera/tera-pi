@@ -111,13 +111,26 @@ uv run alembic upgrade head
 
 ## Probar con el agente de ElevenLabs
 
-ElevenLabs necesita llegar a la API por HTTPS desde internet para llamar a las server tools y al webhook, así que **no puede llamar a tu `localhost`**. Hay dos opciones:
+ElevenLabs necesita llegar a la API por HTTPS desde internet para llamar a las server tools y al webhook, así que **no puede llamar a tu `localhost`**:
 
-- **Desplegar en la VPS** (`https://api.tera-pi.pygmalion.cloud`), que es lo que haremos para el spike.
-- Para pruebas puntuales en local, un túnel temporal (por ejemplo `cloudflared tunnel --url http://localhost:8090`).
+- **Despliegue en la VPS** (`https://api.tera-pi.pygmalion.cloud`): ver [Infra 03](../docs/infra/03-despliegue-backend.md).
+- **Configuración del agente:** ver [`elevenlabs/README.md`](../elevenlabs/README.md).
+- **Página de prueba del spike:** `spike/index.html` (cómo abrirla en Infra 03, paso 8).
+- Para pruebas puntuales en local, un túnel temporal (por ejemplo `cloudflared tunnel --url http://localhost:8090`). En ese caso, despliega el agente con `--api-base-url` apuntando al túnel y recuerda volver a desplegarlo con la URL de la VPS.
+
+## Login de prueba (temporal)
+
+Hasta el ADR de autenticación, `POST /api/sesiones` identifica al usuario con cabeceras:
+
+| Variable | Cabecera | En local | En producción |
+| --- | --- | --- | --- |
+| `ALLOW_DEV_AUTH` | — | `true` | `true` solo durante el spike |
+| `DEV_AUTH_ALLOWED_EMAILS` | `X-Dev-User-Email` | Vacía (cualquier email) | Obligatoria |
+| `DEV_AUTH_TOKEN` | `X-Dev-Token` | Vacía (sin token) | Obligatoria, 32 caracteres o más |
+
+Si en producción falta alguna de las dos, la API no arranca.
 
 ## Pendiente
 
-- Autenticación real de usuarios (ADR propio). Mientras tanto, `ALLOW_DEV_AUTH=true` solo para el spike.
+- Autenticación real de usuarios (ADR propio). Mientras tanto, el login de prueba de arriba.
 - Alerta (correo o Telegram) cuando se registre un evento de riesgo.
-- Despliegue en la VPS con un servicio de systemd.

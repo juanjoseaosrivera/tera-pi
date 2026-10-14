@@ -1,13 +1,20 @@
 import json
 import time
+from datetime import timedelta
 
+import pytest
+from pydantic import SecretStr, ValidationError
+
+from app.core.config import Settings, get_settings
 from app.db.models import (
     Guideline,
     MemoryFact,
     RiskEvent,
+    Scale,
     ScaleResult,
     SessionStatus,
     VoiceSession,
+    utcnow,
 )
 from app.services import elevenlabs
 from tests.conftest import TOOL_HEADERS
@@ -60,6 +67,76 @@ def test_start_session_includes_previous_memory(client, db_session, voice_sessio
 
 def test_start_session_requires_user(client):
     assert client.post("/api/sesiones").status_code == 401
+
+
+def test_start_session_lists_due_scales(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    headers = {"X-Dev-User-Email": "laura@example.com"}
+
+    first = client.post("/api/sesiones", headers=headers).json()["dynamic_variables"]
+    assert first["escalas_pendientes"] == "PHQ-9, GAD-7"
+
+    # PHQ-9 hecho hace 3 días: no toca. GAD-7 hecho hace 20 días: toca otra vez.
+    now = utcnow()
+    for scale, days_ago in ((Scale.PHQ9, 3), (Scale.GAD7, 20)):
+        db_session.add(
+            ScaleResult(
+                user_id=voice_session.user_id,
+                session_id=voice_session.id,
+                scale=scale,
+                total_score=5,
+                completed_at=now - timedelta(days=days_ago),
+            )
+        )
+    db_session.commit()
+
+    later = client.post("/api/sesiones", headers=headers).json()["dynamic_variables"]
+    assert later["escalas_pendientes"] == "GAD-7"
+
+
+def test_dev_auth_allowlist(client, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    settings = get_settings()
+    monkeypatch.setattr(settings, "dev_auth_allowed_emails", "juanjo@example.com")
+
+    intruso = client.post("/api/sesiones", headers={"X-Dev-User-Email": "otro@example.com"})
+    assert intruso.status_code == 403
+    permitido = client.post("/api/sesiones", headers={"X-Dev-User-Email": "Juanjo@Example.com"})
+    assert permitido.status_code == 201
+
+
+def test_dev_auth_token(client, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    settings = get_settings()
+    monkeypatch.setattr(settings, "dev_auth_token", SecretStr("t" * 40))
+    email = {"X-Dev-User-Email": "laura@example.com"}
+
+    assert client.post("/api/sesiones", headers=email).status_code == 401
+    bad = {**email, "X-Dev-Token": "x" * 40}
+    assert client.post("/api/sesiones", headers=bad).status_code == 401
+    good = {**email, "X-Dev-Token": "t" * 40}
+    assert client.post("/api/sesiones", headers=good).status_code == 201
+
+    # Vacío (como en el .env local de ejemplo) = sin token.
+    monkeypatch.setattr(settings, "dev_auth_token", SecretStr(""))
+    assert client.post("/api/sesiones", headers=email).status_code == 201
+
+
+def test_production_requires_dev_auth_allowlist_and_token(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_DEV_AUTH", "true")
+    monkeypatch.setenv("DEV_AUTH_ALLOWED_EMAILS", "")
+    monkeypatch.setenv("DEV_AUTH_TOKEN", "t" * 40)
+    with pytest.raises(ValidationError, match="DEV_AUTH_ALLOWED_EMAILS"):
+        Settings(_env_file=None)
+
+    monkeypatch.setenv("DEV_AUTH_ALLOWED_EMAILS", "juanjo@example.com")
+    monkeypatch.setenv("DEV_AUTH_TOKEN", "corto")
+    with pytest.raises(ValidationError, match="DEV_AUTH_TOKEN"):
+        Settings(_env_file=None)
+
+    monkeypatch.setenv("DEV_AUTH_TOKEN", "t" * 40)
+    assert Settings(_env_file=None).dev_auth_allowed_email_set == {"juanjo@example.com"}
 
 
 # --- Server tools -------------------------------------------------------------

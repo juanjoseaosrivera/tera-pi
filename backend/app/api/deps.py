@@ -1,5 +1,6 @@
 """Dependencias compartidas por los endpoints."""
 
+import hmac
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, status
@@ -17,11 +18,14 @@ def get_current_user(
     db: DbSession,
     settings: Annotated[Settings, Depends(get_settings)],
     x_dev_user_email: Annotated[str | None, Header()] = None,
+    x_dev_token: Annotated[str | None, Header()] = None,
 ) -> User:
     """TEMPORAL hasta el ADR de autenticación.
 
     Con ALLOW_DEV_AUTH=true, identifica al usuario por la cabecera X-Dev-User-Email y lo
-    crea si no existe. Sirve para el spike; nunca debe usarse con usuarios reales.
+    crea si no existe. Si DEV_AUTH_TOKEN tiene valor, exige además la cabecera X-Dev-Token, y
+    si DEV_AUTH_ALLOWED_EMAILS tiene valor, solo acepta esos emails.
+    Sirve para el spike; nunca debe usarse con usuarios reales.
     """
     if not settings.allow_dev_auth:
         raise HTTPException(
@@ -33,11 +37,22 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Falta X-Dev-User-Email"
         )
 
-    user = db.scalar(select(User).where(User.email == x_dev_user_email.lower()))
+    # Un DEV_AUTH_TOKEN vacío (como en el .env local) equivale a no exigir token.
+    expected = settings.dev_auth_token.get_secret_value() if settings.dev_auth_token else ""
+    if expected:
+        if not x_dev_token or not hmac.compare_digest(x_dev_token, expected):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token no válido")
+
+    email = x_dev_user_email.strip().lower()
+    allowed = settings.dev_auth_allowed_email_set
+    if allowed and email not in allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Usuario no autorizado")
+
+    user = db.scalar(select(User).where(User.email == email))
     if user is None:
         user = User(
-            email=x_dev_user_email.lower(),
-            display_name=x_dev_user_email.split("@")[0].capitalize(),
+            email=email,
+            display_name=email.split("@")[0].capitalize(),
             is_adult_confirmed=True,
         )
         db.add(user)
