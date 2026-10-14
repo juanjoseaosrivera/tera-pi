@@ -25,6 +25,10 @@ SCALES: dict[Scale, ScaleSpec] = {
     ),
 }
 
+# Cada cuántos días se repite cada escala (ver documento de visión). El PSS-10 queda fuera
+# hasta confirmar su licencia de uso: el agente no lo propone aunque el backend sepa puntuarlo.
+SCALE_INTERVAL_DAYS: dict[Scale, int] = {Scale.PHQ9: 14, Scale.GAD7: 14}
+
 # Ítem 9 del PHQ-9: pensamientos de que estaría mejor muerto o de hacerse daño.
 # Cualquier respuesta distinta de 0 activa el protocolo de crisis.
 PHQ9_RISK_ITEM = 9

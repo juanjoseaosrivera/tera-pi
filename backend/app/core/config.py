@@ -7,7 +7,7 @@ no arranca. Es mejor fallar al inicio que descubrirlo en mitad de una sesión.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     # TEMPORAL hasta el ADR de autenticación: permite identificar al usuario con la cabecera
     # X-Dev-User-Email. Nunca debe estar activo con usuarios reales.
     allow_dev_auth: bool = False
+    # Emails (separados por comas) que pueden usar ese login de prueba. Obligatorio en
+    # producción: sin esta lista, cualquiera que conozca la URL podría abrir sesiones y
+    # gastar los minutos de ElevenLabs.
+    dev_auth_allowed_emails: str = ""
+    # Token que debe acompañar a X-Dev-User-Email en la cabecera X-Dev-Token. El email solo
+    # dice quién eres; el token demuestra que eres tú. Obligatorio en producción.
+    dev_auth_token: SecretStr | None = None
 
     # Cuántas sesiones anteriores y cuántos recuerdos se pasan al agente.
     memory_previous_sessions: int = 3
@@ -46,6 +53,28 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def dev_auth_allowed_email_set(self) -> frozenset[str]:
+        return frozenset(
+            e.strip().lower() for e in self.dev_auth_allowed_emails.split(",") if e.strip()
+        )
+
+    @model_validator(mode="after")
+    def _dev_auth_needs_allowlist_in_production(self) -> "Settings":
+        if self.environment != "production" or not self.allow_dev_auth:
+            return self
+        if not self.dev_auth_allowed_email_set:
+            raise ValueError(
+                "En producción, ALLOW_DEV_AUTH=true exige DEV_AUTH_ALLOWED_EMAILS "
+                "con al menos un email"
+            )
+        token = self.dev_auth_token.get_secret_value() if self.dev_auth_token else ""
+        if len(token) < 32:
+            raise ValueError(
+                "En producción, ALLOW_DEV_AUTH=true exige DEV_AUTH_TOKEN de 32 caracteres o más"
+            )
+        return self
 
 
 @lru_cache

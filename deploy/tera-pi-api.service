@@ -1,0 +1,42 @@
+# Servicio systemd de la API de Tera-pi (FastAPI + uvicorn).
+# Instalar:  sudo cp deploy/tera-pi-api.service /etc/systemd/system/
+#            sudo systemctl daemon-reload && sudo systemctl enable --now tera-pi-api
+# Ver logs:  sudo journalctl -u tera-pi-api -f
+
+[Unit]
+Description=Tera-pi API (FastAPI)
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# El usuario del site de CloudPanel: el proceso no puede tocar nada fuera de lo suyo.
+User=pygmalion-api-tera-pi
+WorkingDirectory=/home/pygmalion-api-tera-pi/tera-pi/backend
+Environment=PYTHONUNBUFFERED=1
+# Solo escucha en 127.0.0.1: desde internet se entra por Nginx (HTTPS, puerto 443).
+# --proxy-headers y --forwarded-allow-ips: confiar en las cabeceras X-Forwarded-* solo si
+# vienen de Nginx en la propia máquina, para que la app vea la IP y el esquema reales.
+ExecStart=/home/pygmalion-api-tera-pi/tera-pi/backend/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8090 --workers 2 \
+    --proxy-headers --forwarded-allow-ips 127.0.0.1 \
+    --no-server-header
+Restart=on-failure
+RestartSec=5
+
+# Endurecimiento: el proceso solo puede LEER el sistema y su carpeta, sin escribir en ningún
+# sitio (la app no necesita escribir ficheros: todo va a MySQL).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

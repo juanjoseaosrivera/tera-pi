@@ -1,0 +1,176 @@
+{
+  "_comentario": "Server tools del agente. {API_BASE_URL} y {TOOL_SECRET_ID} los sustituye deploy_agent.py. El parámetro session_id sale de la variable dinámica, nunca del LLM.",
+  "tools": [
+    {
+      "type": "webhook",
+      "name": "registrar-animo",
+      "description": "Guarda el ánimo de la persona del 1 al 10. Llámala una vez al empezar la sesión (momento 'inicio') y otra al terminar (momento 'final'), en cuanto la persona diga el número.",
+      "response_timeout_secs": 10,
+      "execution_mode": "immediate",
+      "pre_tool_speech": "off",
+      "tool_error_handling_mode": "auto",
+      "api_schema": {
+        "url": "{API_BASE_URL}/tools/registrar-animo",
+        "method": "POST",
+        "content_type": "application/json",
+        "request_headers": {
+          "X-Tool-Secret": {
+            "secret_id": "{TOOL_SECRET_ID}"
+          }
+        },
+        "request_body_schema": {
+          "type": "object",
+          "description": "",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "dynamic_variable": "session_id"
+            },
+            "momento": {
+              "type": "string",
+              "enum": [
+                "inicio",
+                "final"
+              ],
+              "description": "'inicio' para el check-in del principio, 'final' para el del cierre."
+            },
+            "valor": {
+              "type": "integer",
+              "description": "Ánimo del 1 (muy mal) al 10 (muy bien), tal como lo dijo la persona."
+            }
+          },
+          "required": [
+            "session_id",
+            "momento",
+            "valor"
+          ]
+        }
+      }
+    },
+    {
+      "type": "webhook",
+      "name": "guardar-pauta",
+      "description": "Guarda una pauta que la persona ha aceptado practicar hasta la próxima sesión. Una llamada por pauta.",
+      "response_timeout_secs": 10,
+      "execution_mode": "immediate",
+      "pre_tool_speech": "off",
+      "tool_error_handling_mode": "auto",
+      "api_schema": {
+        "url": "{API_BASE_URL}/tools/guardar-pauta",
+        "method": "POST",
+        "content_type": "application/json",
+        "request_headers": {
+          "X-Tool-Secret": {
+            "secret_id": "{TOOL_SECRET_ID}"
+          }
+        },
+        "request_body_schema": {
+          "type": "object",
+          "description": "",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "dynamic_variable": "session_id"
+            },
+            "texto": {
+              "type": "string",
+              "description": "La pauta en una frase clara y concreta: qué, cuándo y cuánto. Por ejemplo: 'Caminar veinte minutos después de comer, de lunes a viernes'."
+            }
+          },
+          "required": [
+            "session_id",
+            "texto"
+          ]
+        }
+      }
+    },
+    {
+      "type": "webhook",
+      "name": "registrar-respuesta-escala",
+      "description": "Guarda la respuesta a una pregunta del PHQ-9 o del GAD-7. Llámala después de cada respuesta. Si la respuesta indica riesgo, el resultado pedirá activar el protocolo de crisis.",
+      "response_timeout_secs": 10,
+      "execution_mode": "immediate",
+      "pre_tool_speech": "off",
+      "tool_error_handling_mode": "auto",
+      "api_schema": {
+        "url": "{API_BASE_URL}/tools/registrar-respuesta-escala",
+        "method": "POST",
+        "content_type": "application/json",
+        "request_headers": {
+          "X-Tool-Secret": {
+            "secret_id": "{TOOL_SECRET_ID}"
+          }
+        },
+        "request_body_schema": {
+          "type": "object",
+          "description": "",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "dynamic_variable": "session_id"
+            },
+            "escala": {
+              "type": "string",
+              "enum": [
+                "PHQ-9",
+                "GAD-7"
+              ],
+              "description": "Cuestionario al que pertenece la pregunta."
+            },
+            "item": {
+              "type": "integer",
+              "description": "Número de la pregunta dentro del cuestionario (1 a 9 en PHQ-9, 1 a 7 en GAD-7)."
+            },
+            "valor": {
+              "type": "integer",
+              "description": "0 = ningún día, 1 = varios días, 2 = más de la mitad de los días, 3 = casi todos los días."
+            }
+          },
+          "required": [
+            "session_id",
+            "escala",
+            "item",
+            "valor"
+          ]
+        }
+      }
+    },
+    {
+      "type": "webhook",
+      "name": "registrar-riesgo",
+      "description": "OBLIGATORIA en cuanto aparezca cualquier señal de riesgo: ideas de morir o de hacerse daño, planes para ello, peligro inmediato o violencia. Llámala antes de dar los recursos de ayuda.",
+      "response_timeout_secs": 10,
+      "execution_mode": "immediate",
+      "pre_tool_speech": "off",
+      "tool_error_handling_mode": "auto",
+      "api_schema": {
+        "url": "{API_BASE_URL}/tools/registrar-riesgo",
+        "method": "POST",
+        "content_type": "application/json",
+        "request_headers": {
+          "X-Tool-Secret": {
+            "secret_id": "{TOOL_SECRET_ID}"
+          }
+        },
+        "request_body_schema": {
+          "type": "object",
+          "description": "",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "dynamic_variable": "session_id"
+            },
+            "motivo": {
+              "type": "string",
+              "description": "Motivo breve y neutro, sin citar literalmente a la persona. Por ejemplo: 'menciona ideas de no querer vivir'."
+            }
+          },
+          "required": [
+            "session_id",
+            "motivo"
+          ]
+        }
+      }
+    }
+  ]
+}

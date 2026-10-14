@@ -3,9 +3,14 @@
 El agente de ElevenLabs no recuerda nada entre conversaciones: cada llamada empieza
 en blanco. Aquí convertimos lo que guardamos en la base de datos en variables dinámicas
 que se insertan en el prompt (`{{resumen_previo}}`, `{{pautas_pendientes}}`...).
+
+Las decisiones que deben ser deterministas (qué escalas tocan hoy) se toman aquí, en código,
+y no se dejan al criterio del LLM.
 """
 
-from sqlalchemy import select
+from datetime import timedelta
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -13,12 +18,31 @@ from app.db.models import (
     Guideline,
     GuidelineStatus,
     MemoryFact,
+    ScaleResult,
     SessionStatus,
     User,
     VoiceSession,
+    utcnow,
 )
+from app.services.scales import SCALE_INTERVAL_DAYS
 
 SIN_DATOS = "Ninguno todavía."
+SIN_ESCALAS = "Ninguna"
+
+
+def due_scales(db: Session, user: User) -> list[str]:
+    """Escalas que tocan hoy: nunca hechas, o hechas hace más días de los que marca su ciclo."""
+    now = utcnow()
+    due = []
+    for scale, days in SCALE_INTERVAL_DAYS.items():
+        last = db.scalar(
+            select(func.max(ScaleResult.completed_at)).where(
+                ScaleResult.user_id == user.id, ScaleResult.scale == scale
+            )
+        )
+        if last is None or now - last >= timedelta(days=days):
+            due.append(str(scale))
+    return due
 
 
 def build_dynamic_variables(db: Session, user: User, session: VoiceSession) -> dict[str, str]:
@@ -63,4 +87,5 @@ def build_dynamic_variables(db: Session, user: User, session: VoiceSession) -> d
         "pautas_pendientes": "\n".join(f"- {g.text}" for g in pending) or SIN_DATOS,
         "cosas_a_recordar": "\n".join(f"- {f.fact}" for f in facts) or SIN_DATOS,
         "tendencia_animo": ", ".join(moods) or SIN_DATOS,
+        "escalas_pendientes": ", ".join(due_scales(db, user)) or SIN_ESCALAS,
     }
