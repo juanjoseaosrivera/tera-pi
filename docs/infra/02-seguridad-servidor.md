@@ -137,6 +137,7 @@ sudo rm /etc/ssh/sshd_config.d/01-hardening.conf && sudo systemctl restart ssh
 
 ## Pendiente
 
+- [ ] **Rotar la contraseña de `root` de MySQL** (16/10/2026: quedó expuesta en una conversación). Riesgo bajo porque MySQL solo escucha en `127.0.0.1`. Hay que cambiarla en MySQL **y** en la base interna de CloudPanel (`/home/clp/htdocs/app/data/db.sq3`), para que `clpctl db:show:master-credentials` y el panel sigan funcionando. Haz un snapshot antes.
 - [ ] **Comprobar que el Terminal del navegador de Hostinger sigue funcionando** con las contraseñas desactivadas.
 - [ ] **Actualizaciones automáticas de seguridad:** comprobar que `unattended-upgrades` está instalado y activo.
 - [ ] **Proteger el panel (8443):** limitarlo a tu IP si es fija, o añadir autenticación básica.
