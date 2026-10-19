@@ -1,0 +1,30 @@
+# Entorno de desarrollo local de Tera-pi
+# Base de datos: mismo motor que en producción (Percona Server 8.4, ver ADR-002)
+
+services:
+  db:
+    image: percona/percona-server:8.4
+    container_name: terapi-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: terapi
+      MYSQL_USER: terapiapp
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+    ports:
+      # Solo accesible desde tu PC, no desde la red local
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - terapi-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  terapi-db-data:
