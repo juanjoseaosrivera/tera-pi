@@ -111,35 +111,30 @@ def _process_transcription(db: Session, conversation_id: str, data: dict[str, An
 
     analysis = data.get("analysis") or {}
     session.elevenlabs_conversation_id = conversation_id
-    session.status = SessionStatus.COMPLETED
     session.ended_at = utcnow()
-    session.summary = analysis.get("transcript_summary") or session.summary
 
     # El ánimo final por herramienta tiene prioridad; el análisis es la red de seguridad.
     mood = _collected(analysis, "animo_final")
     if session.mood_end is None and isinstance(mood, int | float) and 1 <= mood <= 10:
         session.mood_end = int(mood)
 
-    # Si el agente no guardó pautas durante la llamada, usamos las extraídas al final.
     has_guidelines = db.scalar(select(Guideline.id).where(Guideline.session_id == session.id))
-    if not has_guidelines:
-        for text in _lines(_collected(analysis, "pautas_acordadas")):
-            db.add(Guideline(user_id=session.user_id, session_id=session.id, text=text))
 
-    # El análisis a veces repite lo que el agente ya sabía (se lo recordó en voz alta a la
-    # persona). Solo guardamos lo que de verdad es nuevo.
-    known = list(
-        db.scalars(
-            select(MemoryFact.fact).where(
-                MemoryFact.user_id == session.user_id, MemoryFact.active.is_(True)
-            )
-        )
-    )
-    for fact in _lines(_collected(analysis, "cosas_a_recordar")):
-        if is_duplicate_fact(fact, known):
-            continue
-        db.add(MemoryFact(user_id=session.user_id, session_id=session.id, fact=fact))
-        known.append(fact)
+    # Sesión abandonada: se colgó antes del check-in (sin ánimo inicial ni final ni pautas).
+    # No se usa como memoria: su resumen ("el agente saludó…") solo ensuciaría el contexto de
+    # las siguientes sesiones. El riesgo, en cambio, se procesa siempre (más abajo).
+    if session.mood_start is None and session.mood_end is None and not has_guidelines:
+        session.status = SessionStatus.ABANDONED
+    else:
+        session.status = SessionStatus.COMPLETED
+        session.summary = analysis.get("transcript_summary") or session.summary
+
+        # Si el agente no guardó pautas durante la llamada, usamos las extraídas al final.
+        if not has_guidelines:
+            for text in _lines(_collected(analysis, "pautas_acordadas")):
+                db.add(Guideline(user_id=session.user_id, session_id=session.id, text=text))
+
+        _save_new_facts(db, session, _lines(_collected(analysis, "cosas_a_recordar")))
 
     if _collected(analysis, "riesgo_detectado") is True:
         session.risk_flag = True
@@ -151,3 +146,23 @@ def _process_transcription(db: Session, conversation_id: str, data: dict[str, An
                 reason="Detectado en el análisis post-llamada",
             )
         )
+
+
+def _save_new_facts(db: Session, session: VoiceSession, facts: list[str]) -> None:
+    """Guarda solo los recuerdos que no se parecen a uno que ya teníamos.
+
+    El análisis a veces repite lo que el agente ya sabía (se lo recordó en voz alta a la
+    persona), así que no basta con fiarse de él.
+    """
+    known = list(
+        db.scalars(
+            select(MemoryFact.fact).where(
+                MemoryFact.user_id == session.user_id, MemoryFact.active.is_(True)
+            )
+        )
+    )
+    for fact in facts:
+        if is_duplicate_fact(fact, known):
+            continue
+        db.add(MemoryFact(user_id=session.user_id, session_id=session.id, fact=fact))
+        known.append(fact)

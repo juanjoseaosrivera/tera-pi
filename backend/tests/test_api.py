@@ -390,3 +390,33 @@ def test_dev_auth_display_name(client, db_session, voice_session, monkeypatch):
     monkeypatch.setattr(get_settings(), "dev_auth_display_name", "Laurita")
     variables = client.post("/api/sesiones", headers=headers).json()["dynamic_variables"]
     assert variables["nombre"] == "Laurita"
+
+
+def test_webhook_marks_session_abandoned_before_check_in(client, db_session, voice_session):
+    # Se colgó tras el saludo: ni ánimo ni pautas. No debe usarse como memoria...
+    payload = json.loads(webhook_payload(voice_session.id))
+    payload["data"]["analysis"]["data_collection_results"]["animo_final"]["value"] = None
+    payload["data"]["analysis"]["data_collection_results"]["pautas_acordadas"]["value"] = ""
+    payload["data"]["analysis"]["data_collection_results"]["riesgo_detectado"]["value"] = True
+    post_webhook(client, json.dumps(payload).encode())
+
+    db_session.refresh(voice_session)
+    assert voice_session.status == SessionStatus.ABANDONED
+    assert voice_session.summary is None
+    assert db_session.query(MemoryFact).count() == 0
+    # ...pero el riesgo se registra siempre.
+    assert voice_session.risk_flag is True
+    assert db_session.query(RiskEvent).count() == 1
+
+
+def test_abandoned_session_is_not_previous_memory(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    voice_session.status = SessionStatus.ABANDONED
+    voice_session.summary = "El agente saludó al usuario."
+    db_session.commit()
+
+    variables = client.post(
+        "/api/sesiones", headers={"X-Dev-User-Email": "laura@example.com"}
+    ).json()["dynamic_variables"]
+    assert variables["es_primera_sesion"] == "sí"
+    assert "saludó" not in variables["resumen_previo"]
