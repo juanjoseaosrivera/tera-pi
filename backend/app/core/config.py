@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # Token que debe acompañar a X-Dev-User-Email en la cabecera X-Dev-Token. El email solo
     # dice quién eres; el token demuestra que eres tú. Obligatorio en producción.
     dev_auth_token: SecretStr | None = None
+    # Nombre con el que el agente llama al usuario del login de prueba. Si está vacío, se usa
+    # la parte del email antes de la @. Desaparecerá con el registro de verdad.
+    dev_auth_display_name: str = ""
 
     # Cuántas sesiones anteriores y cuántos recuerdos se pasan al agente.
     memory_previous_sessions: int = 3

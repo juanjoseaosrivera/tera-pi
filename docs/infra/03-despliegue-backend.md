@@ -141,6 +141,8 @@ CORS_ORIGINS=https://tera-pi.pygmalion.cloud,http://localhost:4200
 ALLOW_DEV_AUTH=true
 DEV_AUTH_ALLOWED_EMAILS=TU_EMAIL
 DEV_AUTH_TOKEN=EL_GENERADO
+# Opcional: nombre con el que te llama el agente (si no, la parte del email antes de la @).
+DEV_AUTH_DISPLAY_NAME=TU_NOMBRE
 ```
 
 Guarda con `Ctrl+O`, `Enter`, y sal con `Ctrl+X`. Comprueba los permisos:

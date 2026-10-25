@@ -6,7 +6,7 @@ Configuración del agente de voz de Tera-pi. Según el [ADR-001](../docs/adr/ADR
 | --- | --- |
 | `prompt.md` | El prompt del sistema: identidad, protocolo de crisis, ciclo de sesión, cuestionarios y herramientas |
 | `agent.json` | Voz, idioma, LLM, turnos, privacidad, límites, datos a extraer y criterios de evaluación |
-| `tools.json` | Las cuatro server tools que llaman al backend |
+| `tools.json` | Las server tools que llaman al backend |
 | `deploy_agent.py` | Crea o actualiza en ElevenLabs el secreto, el webhook, las tools y el agente |
 | `state.json` | Los ids de lo creado (lo genera el script; no contiene secretos y se sube a git) |
 

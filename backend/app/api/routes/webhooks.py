@@ -32,6 +32,7 @@ from app.db.models import (
     WebhookEvent,
     utcnow,
 )
+from app.services.memory import is_duplicate_fact
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -125,8 +126,20 @@ def _process_transcription(db: Session, conversation_id: str, data: dict[str, An
         for text in _lines(_collected(analysis, "pautas_acordadas")):
             db.add(Guideline(user_id=session.user_id, session_id=session.id, text=text))
 
+    # El análisis a veces repite lo que el agente ya sabía (se lo recordó en voz alta a la
+    # persona). Solo guardamos lo que de verdad es nuevo.
+    known = list(
+        db.scalars(
+            select(MemoryFact.fact).where(
+                MemoryFact.user_id == session.user_id, MemoryFact.active.is_(True)
+            )
+        )
+    )
     for fact in _lines(_collected(analysis, "cosas_a_recordar")):
+        if is_duplicate_fact(fact, known):
+            continue
         db.add(MemoryFact(user_id=session.user_id, session_id=session.id, fact=fact))
+        known.append(fact)
 
     if _collected(analysis, "riesgo_detectado") is True:
         session.risk_flag = True

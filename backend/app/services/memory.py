@@ -8,7 +8,9 @@ Las decisiones que deben ser deterministas (qué escalas tocan hoy) se toman aqu
 y no se dejan al criterio del LLM.
 """
 
+import unicodedata
 from datetime import timedelta
+from difflib import SequenceMatcher
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -84,8 +86,40 @@ def build_dynamic_variables(db: Session, user: User, session: VoiceSession) -> d
         "nombre": user.display_name,
         "es_primera_sesion": "no" if previous else "sí",
         "resumen_previo": "\n".join(summaries) or SIN_DATOS,
-        "pautas_pendientes": "\n".join(f"- {g.text}" for g in pending) or SIN_DATOS,
+        # El número entre corchetes es el id de la pauta: el agente lo usa en `revisar-pauta`.
+        "pautas_pendientes": "\n".join(f"- [{g.id}] {g.text}" for g in pending) or SIN_DATOS,
         "cosas_a_recordar": "\n".join(f"- {f.fact}" for f in facts) or SIN_DATOS,
         "tendencia_animo": ", ".join(moods) or SIN_DATOS,
         "escalas_pendientes": ", ".join(due_scales(db, user)) or SIN_ESCALAS,
     }
+
+
+# --- Recuerdos sin duplicados ---------------------------------------------------
+
+# Parecido a partir del cual dos recuerdos se consideran el mismo (0 = nada, 1 = idénticos).
+# "Le cansa estar mucho tiempo en casa" y "Se cansa de estar mucho tiempo en casa" ≈ 0,93;
+# "Trabaja de noche" y "Trabaja de día" ≈ 0,73 (distintos, como debe ser).
+FACT_SIMILARITY_THRESHOLD = 0.85
+
+
+def _normalize(text: str) -> str:
+    """Minúsculas, sin tildes ni signos: lo que queda es lo que importa para comparar."""
+    text = unicodedata.normalize("NFKD", text.lower())
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return " ".join("".join(c if c.isalnum() else " " for c in text).split())
+
+
+def is_duplicate_fact(new: str, existing: list[str]) -> bool:
+    """True si `new` dice lo mismo que alguno de `existing`.
+
+    Los recuerdos están cifrados en la base de datos (ADR-002), así que no se pueden comparar
+    con SQL: se descifran y se comparan aquí, en Python. Con 10-50 recuerdos por usuario el
+    coste es despreciable.
+    """
+    candidate = _normalize(new)
+    if not candidate:
+        return True
+    return any(
+        SequenceMatcher(None, candidate, _normalize(old)).ratio() >= FACT_SIMILARITY_THRESHOLD
+        for old in existing
+    )
