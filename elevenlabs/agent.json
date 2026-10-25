@@ -24,7 +24,7 @@
         }
       },
       "prompt": {
-        "llm": "gemini-3.1-pro-preview",
+        "llm": "gemini-2.5-flash",
         "temperature": 0.3,
         "ignore_default_personality": true,
         "timezone": "Europe/Madrid",
