@@ -3,7 +3,8 @@
     "registrar-animo": "tool_9201m5a7p1gdeeebzd5s7kwayfqv",
     "guardar-pauta": "tool_6301m5a7p21jegtb18h13gr3qcaf",
     "registrar-respuesta-escala": "tool_5101m5a7p4g7f1e9a0acf6awe1t3",
-    "registrar-riesgo": "tool_1901m5a7p6fgeegabvegcy9g0sra"
+    "registrar-riesgo": "tool_1901m5a7p6fgeegabvegcy9g0sra",
+    "revisar-pauta": "tool_0001m5yjbxqzfzs8tmptf8y3nxnq"
   },
   "tool_secret_id": "WE0tnxTA9OoUIZi8AlAg",
   "webhook_id": "9e3fc8dd5e8e47cd9293f45db992e4cb",
