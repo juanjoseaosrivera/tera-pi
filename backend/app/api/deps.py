@@ -48,14 +48,19 @@ def get_current_user(
     if allowed and email not in allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Usuario no autorizado")
 
+    display_name = settings.dev_auth_display_name.strip()[:80]
     user = db.scalar(select(User).where(User.email == email))
     if user is None:
         user = User(
             email=email,
-            display_name=email.split("@")[0].capitalize(),
+            display_name=display_name or email.split("@")[0].capitalize(),
             is_adult_confirmed=True,
         )
         db.add(user)
+        db.commit()
+    elif display_name and user.display_name != display_name:
+        # Permite corregir el nombre de un usuario que ya existía, cambiando solo el .env.
+        user.display_name = display_name
         db.commit()
     return user
 

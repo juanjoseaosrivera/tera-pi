@@ -19,6 +19,7 @@ from app.api.deps import DbSession, load_session
 from app.core.security import require_tool_secret
 from app.db.models import (
     Guideline,
+    GuidelineStatus,
     RiskEvent,
     RiskSource,
     Scale,
@@ -65,6 +66,35 @@ def save_guideline(body: GuidelineIn, db: DbSession) -> ToolResult:
     db.add(Guideline(user_id=session.user_id, session_id=session.id, text=body.texto.strip()))
     db.commit()
     return ToolResult(mensaje="Pauta guardada.")
+
+
+class GuidelineReviewIn(BaseModel):
+    session_id: str
+    pauta_id: int
+    estado: Literal["done", "partial", "dropped"]
+
+
+@router.post("/revisar-pauta", response_model=ToolResult)
+def review_guideline(body: GuidelineReviewIn, db: DbSession) -> ToolResult:
+    """Marca cómo le fue a la persona con una pauta de una sesión anterior.
+
+    `pauta_id` es el número que el agente ve entre corchetes en {{pautas_pendientes}}.
+    Solo se aceptan pautas del mismo usuario que la sesión (ADR-002, regla 4): el id de una
+    pauta es un entero fácil de adivinar, a diferencia del UUID de la sesión.
+    """
+    session = load_session(db, body.session_id)
+    guideline = db.get(Guideline, body.pauta_id)
+    if guideline is None or guideline.user_id != session.user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pauta no encontrada")
+    if guideline.session_id == session.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Esa pauta se acaba de acordar: se revisa en la próxima sesión",
+        )
+    guideline.status = GuidelineStatus(body.estado)
+    guideline.reviewed_in_session_id = session.id
+    db.commit()
+    return ToolResult(mensaje="Revisión de la pauta guardada.")
 
 
 class RiskIn(BaseModel):

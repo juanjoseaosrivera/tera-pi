@@ -19,6 +19,11 @@ os.environ.update(
         "ELEVENLABS_WEBHOOK_SECRET": "test-webhook-secret",
         "TOOLS_SHARED_SECRET": "test-tool-secret",
         "ALLOW_DEV_AUTH": "true",
+        # Vacíos a propósito: si no, se colarían los valores del .env local y los tests
+        # dependerían de cómo tenga configurado cada uno su PC.
+        "DEV_AUTH_ALLOWED_EMAILS": "",
+        "DEV_AUTH_TOKEN": "",
+        "DEV_AUTH_DISPLAY_NAME": "",
     }
 )
 

@@ -24,7 +24,7 @@
         }
       },
       "prompt": {
-        "llm": "gemini-3.1-pro-preview",
+        "llm": "gemini-2.5-flash",
         "temperature": 0.3,
         "ignore_default_personality": true,
         "timezone": "Europe/Madrid",
@@ -80,7 +80,7 @@
       },
       "cosas_a_recordar": {
         "type": "string",
-        "description": "Datos estables y útiles para próximas sesiones (situación, preferencias, qué le ayuda). Una por línea. Sin diagnósticos, sin datos de salud detallados, sin nombres de terceros. Vacío si no hay."
+        "description": "Solo datos NUEVOS que la persona haya contado en esta conversación y que sigan siendo útiles en próximas sesiones (situación, preferencias, qué le ayuda). No repitas lo que el agente ya sabía y le recordó en voz alta. Una por línea. Sin diagnósticos, sin datos de salud detallados, sin nombres de terceros. Vacío si no hay nada nuevo."
       },
       "riesgo_detectado": {
         "type": "boolean",

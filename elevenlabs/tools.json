@@ -86,6 +86,53 @@
     },
     {
       "type": "webhook",
+      "name": "revisar-pauta",
+      "description": "Guarda cómo le fue a la persona con una pauta de una sesión anterior. Llámala en cuanto la persona te cuente cómo le fue con una pauta. Si no la hizo y quiere intentarlo otra vez, no la llames: la pauta sigue pendiente.",
+      "response_timeout_secs": 10,
+      "execution_mode": "immediate",
+      "pre_tool_speech": "off",
+      "tool_error_handling_mode": "auto",
+      "api_schema": {
+        "url": "{API_BASE_URL}/tools/revisar-pauta",
+        "method": "POST",
+        "content_type": "application/json",
+        "request_headers": {
+          "X-Tool-Secret": {
+            "secret_id": "{TOOL_SECRET_ID}"
+          }
+        },
+        "request_body_schema": {
+          "type": "object",
+          "description": "",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "dynamic_variable": "session_id"
+            },
+            "pauta_id": {
+              "type": "integer",
+              "description": "El número entre corchetes que aparece delante de la pauta en la lista de pautas pendientes. Por ejemplo, 12 para '[12] Caminar veinte minutos'."
+            },
+            "estado": {
+              "type": "string",
+              "enum": [
+                "done",
+                "partial",
+                "dropped"
+              ],
+              "description": "'done' si la hizo, 'partial' si la hizo a medias o algunos días, 'dropped' si no la hizo y la persona prefiere dejarla."
+            }
+          },
+          "required": [
+            "session_id",
+            "pauta_id",
+            "estado"
+          ]
+        }
+      }
+    },
+    {
+      "type": "webhook",
       "name": "registrar-respuesta-escala",
       "description": "Guarda la respuesta a una pregunta del PHQ-9 o del GAD-7. Llámala después de cada respuesta. Si la respuesta indica riesgo, el resultado pedirá activar el protocolo de crisis.",
       "response_timeout_secs": 10,
