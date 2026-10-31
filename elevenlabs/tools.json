@@ -1,5 +1,5 @@
 {
-  "_comentario": "Server tools del agente. {API_BASE_URL} y {TOOL_SECRET_ID} los sustituye deploy_agent.py. El parámetro session_id sale de la variable dinámica, nunca del LLM.",
+  "_comentario": "Server tools del agente. {API_BASE_URL} y {TOOL_SECRET_ID} los sustituye deploy_agent.py. El parámetro session_id sale de la variable dinámica, nunca del LLM. interruption_mode=disable_during_tool: si la persona habla mientras se guarda un dato, el guardado no se cancela.",
   "tools": [
     {
       "type": "webhook",
@@ -45,12 +45,13 @@
             "valor"
           ]
         }
-      }
+      },
+      "interruption_mode": "disable_during_tool"
     },
     {
       "type": "webhook",
       "name": "guardar-pauta",
-      "description": "Guarda una pauta que la persona ha aceptado practicar hasta la próxima sesión. Una llamada por pauta.",
+      "description": "Guarda una pauta nueva que la persona ha aceptado practicar hasta la próxima sesión. Una llamada por pauta. No guardes una que ya esté en la lista de pautas pendientes.",
       "response_timeout_secs": 10,
       "execution_mode": "immediate",
       "pre_tool_speech": "off",
@@ -82,12 +83,13 @@
             "texto"
           ]
         }
-      }
+      },
+      "interruption_mode": "disable_during_tool"
     },
     {
       "type": "webhook",
       "name": "revisar-pauta",
-      "description": "Guarda cómo le fue a la persona con una pauta de una sesión anterior. Llámala en cuanto la persona te cuente cómo le fue con una pauta. Si no la hizo y quiere intentarlo otra vez, no la llames: la pauta sigue pendiente.",
+      "description": "Guarda cómo le fue a la persona con una pauta de una sesión anterior. Llámala para cada pauta pendiente en cuanto sepas cómo le fue. Si no la hizo pero quiere seguir intentándolo, NO la llames: la pauta sigue pendiente. 'dropped' solo si dice claramente que la deja.",
       "response_timeout_secs": 10,
       "execution_mode": "immediate",
       "pre_tool_speech": "off",
@@ -120,7 +122,7 @@
                 "partial",
                 "dropped"
               ],
-              "description": "'done' si la hizo, 'partial' si la hizo a medias o algunos días, 'dropped' si no la hizo y la persona prefiere dejarla."
+              "description": "'done' si la hizo; 'partial' si la hizo en parte o algunos días; 'dropped' solo si dice claramente que la deja. Si no la hizo pero quiere seguir, no llames a la herramienta."
             }
           },
           "required": [
@@ -129,7 +131,8 @@
             "estado"
           ]
         }
-      }
+      },
+      "interruption_mode": "disable_during_tool"
     },
     {
       "type": "webhook",
@@ -180,7 +183,8 @@
             "valor"
           ]
         }
-      }
+      },
+      "interruption_mode": "disable_during_tool"
     },
     {
       "type": "webhook",
@@ -217,7 +221,8 @@
             "motivo"
           ]
         }
-      }
+      },
+      "interruption_mode": "disable_during_tool"
     }
   ]
 }

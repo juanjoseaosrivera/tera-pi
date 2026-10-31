@@ -4,8 +4,8 @@ Al terminar cada conversación, ElevenLabs envía la transcripción y el anális
 guardamos solo lo necesario (ADR-002, regla 1: no guardamos la transcripción):
 - el resumen de la conversación;
 - los datos extraídos configurados en el agente (data collection):
-    animo_final (entero 1-10), pautas_acordadas (texto, una por línea),
-    cosas_a_recordar (texto, una por línea), riesgo_detectado (booleano);
+    animo_inicial y animo_final (enteros 1-10, solo si la herramienta no los guardó),
+    cosas_a_recordar (texto, una por línea) y riesgo_detectado (booleano);
 - el vínculo entre la sesión y el conversation_id de ElevenLabs.
 """
 
@@ -113,10 +113,12 @@ def _process_transcription(db: Session, conversation_id: str, data: dict[str, An
     session.elevenlabs_conversation_id = conversation_id
     session.ended_at = utcnow()
 
-    # El ánimo final por herramienta tiene prioridad; el análisis es la red de seguridad.
-    mood = _collected(analysis, "animo_final")
-    if session.mood_end is None and isinstance(mood, int | float) and 1 <= mood <= 10:
-        session.mood_end = int(mood)
+    # El ánimo guardado por herramienta tiene prioridad; el análisis es la red de seguridad
+    # (por ejemplo, si la llamada a registrar-animo se canceló porque la persona siguió hablando).
+    if session.mood_start is None:
+        session.mood_start = _valid_mood(_collected(analysis, "animo_inicial"))
+    if session.mood_end is None:
+        session.mood_end = _valid_mood(_collected(analysis, "animo_final"))
 
     has_guidelines = db.scalar(select(Guideline.id).where(Guideline.session_id == session.id))
 
@@ -129,10 +131,9 @@ def _process_transcription(db: Session, conversation_id: str, data: dict[str, An
         session.status = SessionStatus.COMPLETED
         session.summary = analysis.get("transcript_summary") or session.summary
 
-        # Si el agente no guardó pautas durante la llamada, usamos las extraídas al final.
-        if not has_guidelines:
-            for text in _lines(_collected(analysis, "pautas_acordadas")):
-                db.add(Guideline(user_id=session.user_id, session_id=session.id, text=text))
+        # Las pautas solo se crean con guardar-pauta, cuando la persona las acepta en la
+        # conversación. Antes también se extraían del análisis, pero confundía lo que la persona
+        # YA había hecho ("fui al gimnasio") con pautas nuevas.
 
         _save_new_facts(db, session, _lines(_collected(analysis, "cosas_a_recordar")))
 
@@ -146,6 +147,13 @@ def _process_transcription(db: Session, conversation_id: str, data: dict[str, An
                 reason="Detectado en el análisis post-llamada",
             )
         )
+
+
+def _valid_mood(value: Any) -> int | None:
+    """El ánimo del análisis, si es un número del 1 al 10; si no, None."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return int(value) if 1 <= value <= 10 else None
 
 
 def _save_new_facts(db: Session, session: VoiceSession, facts: list[str]) -> None:

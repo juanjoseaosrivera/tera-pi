@@ -309,7 +309,9 @@ def webhook_payload(session_id: str) -> bytes:
                 "analysis": {
                     "transcript_summary": "Habló del trabajo y le ayudó la respiración.",
                     "data_collection_results": {
+                        "animo_inicial": collected("animo_inicial", 5),
                         "animo_final": collected("animo_final", 7),
+                        # Ya no se usa, pero un agente con la configuración antigua aún lo envía.
                         "pautas_acordadas": collected("pautas_acordadas", "- Caminar\n- Leer"),
                         "cosas_a_recordar": collected("cosas_a_recordar", "Tiene un perro"),
                         "riesgo_detectado": collected("riesgo_detectado", False),
@@ -341,9 +343,10 @@ def test_webhook_processes_session(client, db_session, voice_session):
     db_session.refresh(voice_session)
     assert voice_session.status == SessionStatus.COMPLETED
     assert voice_session.elevenlabs_conversation_id == "conv_123"
-    assert voice_session.mood_end == 7
+    assert (voice_session.mood_start, voice_session.mood_end) == (5, 7)
     assert voice_session.summary.startswith("Habló del trabajo")
-    assert [g.text for g in db_session.query(Guideline).all()] == ["Caminar", "Leer"]
+    # Las pautas solo se crean con guardar-pauta: el análisis no las inventa.
+    assert db_session.query(Guideline).count() == 0
     assert db_session.query(MemoryFact).one().fact == "Tiene un perro"
     assert db_session.query(RiskEvent).count() == 0
 
@@ -352,7 +355,7 @@ def test_webhook_is_idempotent(client, db_session, voice_session):
     body = webhook_payload(voice_session.id)
     post_webhook(client, body)
     assert post_webhook(client, body).json() == {"status": "duplicate"}
-    assert db_session.query(Guideline).count() == 2
+    assert db_session.query(MemoryFact).count() == 1
 
 
 def test_webhook_ignores_other_events(client):
@@ -395,8 +398,8 @@ def test_dev_auth_display_name(client, db_session, voice_session, monkeypatch):
 def test_webhook_marks_session_abandoned_before_check_in(client, db_session, voice_session):
     # Se colgó tras el saludo: ni ánimo ni pautas. No debe usarse como memoria...
     payload = json.loads(webhook_payload(voice_session.id))
+    payload["data"]["analysis"]["data_collection_results"]["animo_inicial"]["value"] = None
     payload["data"]["analysis"]["data_collection_results"]["animo_final"]["value"] = None
-    payload["data"]["analysis"]["data_collection_results"]["pautas_acordadas"]["value"] = ""
     payload["data"]["analysis"]["data_collection_results"]["riesgo_detectado"]["value"] = True
     post_webhook(client, json.dumps(payload).encode())
 
@@ -420,3 +423,42 @@ def test_abandoned_session_is_not_previous_memory(client, db_session, voice_sess
     ).json()["dynamic_variables"]
     assert variables["es_primera_sesion"] == "sí"
     assert "saludó" not in variables["resumen_previo"]
+
+
+def test_webhook_mood_from_tool_has_priority(client, db_session, voice_session):
+    # La herramienta guardó 3 y 6; el análisis dice 5 y 7. Mandan las herramientas.
+    voice_session.mood_start, voice_session.mood_end = 3, 6
+    db_session.commit()
+    post_webhook(client, webhook_payload(voice_session.id))
+    db_session.refresh(voice_session)
+    assert (voice_session.mood_start, voice_session.mood_end) == (3, 6)
+
+
+@pytest.mark.parametrize("value", [0, 11, "nueve", True])
+def test_webhook_ignores_invalid_mood(client, db_session, voice_session, value):
+    payload = json.loads(webhook_payload(voice_session.id))
+    payload["data"]["analysis"]["data_collection_results"]["animo_inicial"]["value"] = value
+    post_webhook(client, json.dumps(payload).encode())
+    db_session.refresh(voice_session)
+    assert voice_session.mood_start is None
+
+
+def test_save_guideline_skips_pending_duplicate(client, db_session, voice_session):
+    body = {"session_id": voice_session.id, "texto": "Ir al gimnasio tres días por semana"}
+    client.post("/tools/guardar-pauta", json=body, headers=TOOL_HEADERS)
+    again = {**body, "texto": "ir al gimnasio tres dias por semana."}
+    response = client.post("/tools/guardar-pauta", json=again, headers=TOOL_HEADERS)
+
+    assert response.status_code == 200
+    assert "ya estaba pendiente" in response.json()["mensaje"]
+    assert db_session.query(Guideline).count() == 1
+
+
+def test_save_guideline_allows_repeating_a_reviewed_one(client, db_session, voice_session):
+    # Una pauta ya revisada (hecha) se puede volver a acordar: no está pendiente.
+    old = _previous_guideline(db_session, voice_session, "Caminar veinte minutos")
+    old.status = "done"
+    db_session.commit()
+    body = {"session_id": voice_session.id, "texto": "Caminar veinte minutos"}
+    client.post("/tools/guardar-pauta", json=body, headers=TOOL_HEADERS)
+    assert db_session.query(Guideline).count() == 2
