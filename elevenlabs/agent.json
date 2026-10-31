@@ -70,13 +70,13 @@
     },
     "summary_language": "es",
     "data_collection": {
+      "animo_inicial": {
+        "type": "integer",
+        "description": "Ánimo de la persona del 1 al 10 al empezar la sesión, tal como lo dijo. Si dudó entre dos números, el último que dijo. Si no lo dijo, déjalo vacío."
+      },
       "animo_final": {
         "type": "integer",
         "description": "Ánimo de la persona del 1 al 10 al final de la sesión, tal como lo dijo. Si no lo dijo, déjalo vacío."
-      },
-      "pautas_acordadas": {
-        "type": "string",
-        "description": "Pautas concretas que la persona aceptó para los próximos días. Una por línea, en frases cortas. Vacío si no hubo."
       },
       "cosas_a_recordar": {
         "type": "string",

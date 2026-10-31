@@ -27,6 +27,7 @@ from app.db.models import (
     ScaleResult,
 )
 from app.services import scales
+from app.services.memory import is_duplicate_fact
 
 router = APIRouter(
     prefix="/tools", tags=["server tools"], dependencies=[Depends(require_tool_secret)]
@@ -63,7 +64,21 @@ class GuidelineIn(BaseModel):
 @router.post("/guardar-pauta", response_model=ToolResult)
 def save_guideline(body: GuidelineIn, db: DbSession) -> ToolResult:
     session = load_session(db, body.session_id)
-    db.add(Guideline(user_id=session.user_id, session_id=session.id, text=body.texto.strip()))
+    text = body.texto.strip()
+
+    # Si ya hay una pauta pendiente que dice lo mismo, no se duplica. El texto está cifrado,
+    # así que se compara en Python (como los recuerdos), no en SQL.
+    pending = db.scalars(
+        select(Guideline.text).where(
+            Guideline.user_id == session.user_id, Guideline.status == GuidelineStatus.PENDING
+        )
+    ).all()
+    if is_duplicate_fact(text, list(pending)):
+        return ToolResult(
+            mensaje="Esa pauta ya estaba pendiente: no hace falta guardarla otra vez."
+        )
+
+    db.add(Guideline(user_id=session.user_id, session_id=session.id, text=text))
     db.commit()
     return ToolResult(mensaje="Pauta guardada.")
 
