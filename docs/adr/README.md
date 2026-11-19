@@ -7,4 +7,4 @@ Cada ADR registra una decisión técnica importante: el contexto, las opciones q
 | ADR | Título | Estado |
 | --- | --- | --- |
 | [ADR-001](ADR-001-arquitectura-conversacion-voz.md) | Arquitectura de la conversación por voz (dónde vive el LLM) | Aceptado |
-| [ADR-002](ADR-002-base-de-datos-y-modelo-de-datos.md) | Base de datos y modelo de datos | Propuesto |
+| [ADR-002](ADR-002-base-de-datos-y-modelo-de-datos.md) | Base de datos y modelo de datos | Aceptado |
