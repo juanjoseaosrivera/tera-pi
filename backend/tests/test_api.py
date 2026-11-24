@@ -462,3 +462,73 @@ def test_save_guideline_allows_repeating_a_reviewed_one(client, db_session, voic
     body = {"session_id": voice_session.id, "texto": "Caminar veinte minutos"}
     client.post("/tools/guardar-pauta", json=body, headers=TOOL_HEADERS)
     assert db_session.query(Guideline).count() == 2
+
+
+# --- Sesiones siguientes a un riesgo (SSA-12) -------------------------------------
+
+
+def _start(client):
+    return client.post("/api/sesiones", headers={"X-Dev-User-Email": "laura@example.com"}).json()[
+        "dynamic_variables"
+    ]
+
+
+def test_no_previous_risk(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    voice_session.status = SessionStatus.COMPLETED
+    db_session.commit()
+    assert _start(client)["riesgo_previo"] == "no"
+
+
+def test_risk_in_last_session(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    # El webhook aún no ha llegado (sigue en CREATED), pero la tool ya marcó el riesgo.
+    client.post(
+        "/tools/registrar-riesgo",
+        json={"session_id": voice_session.id, "motivo": "x"},
+        headers=TOOL_HEADERS,
+    )
+    assert _start(client)["riesgo_previo"] == "sí, en la última sesión"
+
+
+def test_failed_connection_does_not_hide_last_risk(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    voice_session.status = SessionStatus.COMPLETED
+    voice_session.risk_flag = True
+    voice_session.started_at = utcnow() - timedelta(days=2)
+    # Una sesión que se creó pero nunca llegó a hablar.
+    db_session.add(VoiceSession(user_id=voice_session.user_id, started_at=utcnow() - timedelta(days=1)))
+    db_session.commit()
+    assert _start(client)["riesgo_previo"] == "sí, en la última sesión"
+
+
+def test_recent_risk_not_in_last_session(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    voice_session.status = SessionStatus.COMPLETED
+    voice_session.risk_flag = True
+    voice_session.started_at = utcnow() - timedelta(days=10)
+    db_session.add(
+        VoiceSession(
+            user_id=voice_session.user_id,
+            status=SessionStatus.COMPLETED,
+            started_at=utcnow() - timedelta(days=3),
+        )
+    )
+    db_session.commit()
+    assert _start(client)["riesgo_previo"] == "sí, en las últimas semanas"
+
+
+def test_old_risk_is_forgotten(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    voice_session.status = SessionStatus.COMPLETED
+    voice_session.risk_flag = True
+    voice_session.started_at = utcnow() - timedelta(days=45)
+    db_session.add(
+        VoiceSession(
+            user_id=voice_session.user_id,
+            status=SessionStatus.COMPLETED,
+            started_at=utcnow() - timedelta(days=3),
+        )
+    )
+    db_session.commit()
+    assert _start(client)["riesgo_previo"] == "no"
