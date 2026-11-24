@@ -87,11 +87,21 @@ def turno(role: str, message: str | None, t: int, **extra: Any) -> dict[str, Any
     return {"role": role, "message": message, "time_in_call_secs": t, **extra}
 
 
-def historial(bateria: dict[str, Any], contexto: str, frase: str) -> list[dict[str, Any]]:
-    """Turnos del contexto + la frase del caso como último turno del usuario."""
-    pares = bateria["contextos"][contexto]["turnos"]
-    turnos = [turno(rol, msg, i * SEGUNDOS_POR_TURNO) for i, (rol, msg) in enumerate(pares)]
-    turnos.append(turno("user", frase, len(pares) * SEGUNDOS_POR_TURNO))
+def historial(
+    bateria: dict[str, Any], contexto: str, frase: str, antes: list | None = None
+) -> list[dict[str, Any]]:
+    """Turnos del contexto, los de "antes" y la frase del caso como último turno del usuario.
+
+    Un turno ["tool", nombre, parámetros, resultado] es una herramienta que el agente ya llamó.
+    """
+    turnos: list[dict[str, Any]] = []
+    for i, t in enumerate([*bateria["contextos"][contexto]["turnos"], *(antes or [])]):
+        segundos = i * SEGUNDOS_POR_TURNO
+        if t[0] == "tool":
+            turnos += llamada_y_resultado(t[1], t[2], t[3], segundos)
+        else:
+            turnos.append(turno(t[0], t[1], segundos))
+    turnos.append(turno("user", frase, len(turnos) * SEGUNDOS_POR_TURNO))
     return turnos
 
 
@@ -99,7 +109,7 @@ def llamada_y_resultado(
     nombre: str, parametros: dict[str, Any], resultado: dict[str, Any], t: int
 ) -> list[dict[str, Any]]:
     """Un turno del agente que llama a una tool y otro con lo que devolvió el backend."""
-    request_id = f"prueba-{nombre}"
+    request_id = f"prueba-{nombre}-{t}"
     params = {"session_id": "bateria-pruebas", **parametros}
     return [
         turno(
@@ -196,14 +206,18 @@ def llm_test(
     }
 
 
-def construir_tests(bateria: dict[str, Any], tool_ids: dict[str, str]) -> list[tuple[str, str, dict]]:
+def construir_tests(
+    bateria: dict[str, Any], tool_ids: dict[str, str]
+) -> list[tuple[str, str, dict]]:
     """Devuelve (id del caso, grupo, cuerpo del test) para todos los casos."""
     tests: list[tuple[str, str, dict]] = []
 
     for c in bateria["riesgo"]:
         nombre = f"{PREFIJO} {c['id']} riesgo/{c['tipo']}: {c['frase'][:60]}"
-        chat = historial(bateria, c["contexto"], c["frase"])
-        body = tool_test(nombre, chat, variables(bateria, c["contexto"]), tool_ids["registrar-riesgo"])
+        chat = historial(bateria, c["contexto"], c["frase"], c.get("antes"))
+        body = tool_test(
+            nombre, chat, variables(bateria, c["contexto"]), tool_ids["registrar-riesgo"]
+        )
         tests.append((c["id"], "riesgo", body))
 
     for c in bateria["ambiguas"]:
@@ -257,7 +271,10 @@ def construir_tests(bateria: dict[str, Any], tool_ids: dict[str, str]) -> list[t
         nombre = f"{PREFIJO} {c['id']} sin riesgo: {c['frase'][:60]}"
         chat = historial(bateria, c["contexto"], c["frase"])
         body = tool_test(
-            nombre, chat, variables(bateria, c["contexto"]), tool_ids["registrar-riesgo"],
+            nombre,
+            chat,
+            variables(bateria, c["contexto"]),
+            tool_ids["registrar-riesgo"],
             ausente=True,
         )
         tests.append((c["id"], "sin_riesgo", body))
@@ -342,16 +359,14 @@ def ejecutar(el: ElevenLabs, agent_id: str, ids: list[str], repetir: int) -> dic
 
 
 def motivo_fallo(run: dict[str, Any]) -> str:
+    """Por qué falló y qué hizo el agente: sin lo segundo no se sabe si falla el test o el agente."""
     cond = run.get("condition_result") or {}
-    resumen = (cond.get("rationale") or {}).get("summary") or ""
-    if not resumen:
-        respuestas = run.get("agent_responses") or []
-        textos = [r.get("message") for r in respuestas if r.get("message")]
-        llamadas = [
-            tc.get("tool_name") for r in respuestas for tc in (r.get("tool_calls") or [])
-        ]
-        resumen = f"tools={llamadas or 'ninguna'}; dijo: {' '.join(textos)[:200]}"
-    return resumen.replace("\n", " ")
+    resumen = (cond.get("rationale") or {}).get("summary") or "sin motivo"
+    respuestas = run.get("agent_responses") or []
+    textos = [r.get("message") for r in respuestas if r.get("message")]
+    llamadas = [tc.get("tool_name") for r in respuestas for tc in (r.get("tool_calls") or [])]
+    dijo = " ".join(textos).replace("\n", " ")[:300]
+    return f"{resumen}. Tools: {llamadas or 'ninguna'}. Dijo: «{dijo}»"
 
 
 def informar(
@@ -407,9 +422,13 @@ def informar(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dry-run", action="store_true", help="muestra los tests sin enviarlos")
-    parser.add_argument("--solo-sincronizar", action="store_true", help="crea o actualiza, sin ejecutar")
+    parser.add_argument(
+        "--solo-sincronizar", action="store_true", help="crea o actualiza, sin ejecutar"
+    )
     parser.add_argument("--grupo", action="append", help="ejecuta solo este grupo (repetible)")
-    parser.add_argument("--repetir", type=int, default=1, help="veces que se ejecuta cada test (1-50)")
+    parser.add_argument(
+        "--repetir", type=int, default=1, help="veces que se ejecuta cada test (1-50)"
+    )
     args = parser.parse_args()
 
     bateria = json.loads(BATERIA_FILE.read_text(encoding="utf-8"))
@@ -435,7 +454,9 @@ def main() -> None:
 
     sincronizar(el, tests, state)
     if args.dry_run:
-        print(f"\n[dry-run] {len(tests)} tests. No se ha enviado nada ni se ha modificado state.json.")
+        print(
+            f"\n[dry-run] {len(tests)} tests. No se ha enviado nada ni se ha modificado state.json."
+        )
         return
     STATE_FILE.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
     if args.solo_sincronizar:
