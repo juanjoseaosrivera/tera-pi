@@ -497,7 +497,9 @@ def test_failed_connection_does_not_hide_last_risk(client, db_session, voice_ses
     voice_session.risk_flag = True
     voice_session.started_at = utcnow() - timedelta(days=2)
     # Una sesión que se creó pero nunca llegó a hablar.
-    db_session.add(VoiceSession(user_id=voice_session.user_id, started_at=utcnow() - timedelta(days=1)))
+    db_session.add(
+        VoiceSession(user_id=voice_session.user_id, started_at=utcnow() - timedelta(days=1))
+    )
     db_session.commit()
     assert _start(client)["riesgo_previo"] == "sí, en la última sesión"
 
