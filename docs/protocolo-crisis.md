@@ -102,7 +102,13 @@ Qué hace el agente:
 - **`sí, en la última sesión` o `sí, en las últimas semanas`:** sin estoicismo, más escucha que guion, anima a apoyarse en su entorno y en un profesional, y termina con la despedida fija.
 - **`no`:** sesión normal.
 
-El agente no sabe qué pasó en la sesión del riesgo (el motivo está cifrado en `risk_events` y no se le pasa). No lo supone, no lo cuenta y no dice que quedó registrado.
+El agente no sabe qué pasó en la sesión del riesgo. No lo supone, no lo cuenta y no dice que quedó registrado. Para que eso sea cierto, el backend no deja que el riesgo entre en la memoria ([SSA-49](https://linear.app/ssapp2/issue/SSA-49)):
+
+- **El motivo** está cifrado en `risk_events` y no se pasa al agente.
+- **El resumen** de una sesión con `risk_flag` se sustituye por un texto fijo y neutro: "Se activó el protocolo de seguridad. No se guardan detalles de esta sesión.". El resumen del análisis lo escribe un LLM y podía citar lo que dijo la persona.
+- **Los recuerdos** (`cosas_a_recordar`) de una sesión con `risk_flag` no se guardan. Un recuerdo no caduca: si guardara "piensa que no quiere seguir viviendo", el agente lo recibiría en todas las sesiones, también pasados los 30 días de `riesgo_previo`.
+
+Esto se decide en código, no en la descripción del campo: la prueba de voz del 25/11/2026 mostró que el LLM del análisis guardaba el riesgo como recuerdo aunque la descripción lo prohibía. La descripción de `cosas_a_recordar` en `agent.json` también lo prohíbe, como segunda barrera.
 
 ## Orden de despliegue
 

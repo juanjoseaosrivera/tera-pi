@@ -5,6 +5,7 @@ from datetime import timedelta
 import pytest
 from pydantic import SecretStr, ValidationError
 
+from app.api.routes import webhooks
 from app.core.config import Settings, get_settings
 from app.db.models import (
     Guideline,
@@ -534,3 +535,62 @@ def test_old_risk_is_forgotten(client, db_session, voice_session, monkeypatch):
     )
     db_session.commit()
     assert _start(client)["riesgo_previo"] == "no"
+
+
+# --- Sin datos de riesgo en la memoria (SSA-49) ---------------------------------
+
+
+def _risk_payload(session_id: str, riesgo_detectado: bool) -> bytes:
+    payload = json.loads(webhook_payload(session_id))
+    results = payload["data"]["analysis"]["data_collection_results"]
+    results["cosas_a_recordar"]["value"] = (
+        "A veces piensa que no quiere seguir viviendo.\nTiene un perro"
+    )
+    results["riesgo_detectado"]["value"] = riesgo_detectado
+    payload["data"]["analysis"]["transcript_summary"] = "Expresó pensamientos suicidas."
+    return json.dumps(payload).encode()
+
+
+def test_risk_from_tool_keeps_no_memory(client, db_session, voice_session):
+    # La herramienta marcó el riesgo durante la llamada; el análisis no lo detecta.
+    client.post(
+        "/tools/registrar-riesgo",
+        json={"session_id": voice_session.id, "motivo": "x"},
+        headers=TOOL_HEADERS,
+    )
+    post_webhook(client, _risk_payload(voice_session.id, riesgo_detectado=False))
+
+    db_session.refresh(voice_session)
+    assert voice_session.status == SessionStatus.COMPLETED
+    assert voice_session.summary == webhooks.RISK_SESSION_SUMMARY
+    assert db_session.query(MemoryFact).count() == 0
+
+
+def test_risk_from_analysis_keeps_no_memory(client, db_session, voice_session):
+    # Nadie llamó a la herramienta: el riesgo llega en el mismo webhook.
+    post_webhook(client, _risk_payload(voice_session.id, riesgo_detectado=True))
+
+    db_session.refresh(voice_session)
+    assert voice_session.risk_flag is True
+    assert voice_session.summary == webhooks.RISK_SESSION_SUMMARY
+    assert "suicid" not in voice_session.summary
+    assert db_session.query(MemoryFact).count() == 0
+    assert db_session.query(RiskEvent).one().source == "post_call"
+
+
+def test_risk_session_keeps_moods(client, db_session, voice_session):
+    post_webhook(client, _risk_payload(voice_session.id, riesgo_detectado=True))
+    db_session.refresh(voice_session)
+    assert (voice_session.mood_start, voice_session.mood_end) == (5, 7)
+
+
+def test_next_session_after_risk_has_no_risk_details(
+    client, db_session, voice_session, monkeypatch
+):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    post_webhook(client, _risk_payload(voice_session.id, riesgo_detectado=True))
+
+    variables = _start(client)
+    assert variables["riesgo_previo"] == "sí, en la última sesión"
+    assert "suicid" not in variables["resumen_previo"]
+    assert "seguir viviendo" not in variables["cosas_a_recordar"]
