@@ -7,6 +7,7 @@ Uso (desde la carpeta backend/, que ya tiene httpx instalado):
     uv run python ../elevenlabs/run_tests.py                       # sincroniza y ejecuta todo
     uv run python ../elevenlabs/run_tests.py --grupo riesgo        # solo un grupo
     uv run python ../elevenlabs/run_tests.py --repetir 3           # cada test 3 veces
+    uv run python ../elevenlabs/run_tests.py --modelo claude-haiku-5-5   # otro LLM, sin desplegar
 
 Qué hace:
 
@@ -349,16 +350,21 @@ def sincronizar(el: ElevenLabs, tests: list[tuple[str, str, dict]], state: dict)
             print(f"Test creado: {caso} ({test_ids[caso]})")
 
 
-def ejecutar(el: ElevenLabs, agent_id: str, ids: list[str], repetir: int) -> dict[str, Any]:
-    run = el.call(
-        "POST",
-        f"/v1/convai/agents/{agent_id}/run-tests",
-        {
-            "tests": [{"test_id": i} for i in ids],
-            "repeat_count": repetir,
-            "name": f"bateria {datetime.now():%Y-%m-%d %H:%M}",
-        },
-    )
+def ejecutar(
+    el: ElevenLabs, agent_id: str, ids: list[str], repetir: int, modelo: str | None = None
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "tests": [{"test_id": i} for i in ids],
+        "repeat_count": repetir,
+        "name": f"bateria {datetime.now():%Y-%m-%d %H:%M}" + (f" ({modelo})" if modelo else ""),
+    }
+    if modelo:
+        # Se fusiona con la configuración guardada: solo cambia el LLM; el prompt, las tools y
+        # el resto siguen igual. Comprobado el 25/11/2026 (SSA-14) con R01 y X01.
+        body["agent_config_override"] = {
+            "conversation_config": {"agent": {"prompt": {"llm": modelo}}}
+        }
+    run = el.call("POST", f"/v1/convai/agents/{agent_id}/run-tests", body)
     invocation_id = run["id"]
     print(f"\nEjecutando {len(ids)} tests x{repetir} (invocación {invocation_id})...")
     espera = 5
@@ -423,7 +429,7 @@ def informar(
         f"# Batería de pruebas — {datetime.now():%Y-%m-%d %H:%M}",
         "",
         f"- Agente: `{state['agent_id']}`",
-        f"- Modelo en agent.json: `{llm}`",
+        f"- Modelo probado: `{llm}`",
         "- Modelo que respondió: "
         + (", ".join(f"`{m}` ({n} turnos)" for m, n in modelos_reales.most_common()) or "-"),
         f"- Repeticiones por test: {inv.get('repeat_count', 1)}",
@@ -484,6 +490,13 @@ def main() -> None:
     parser.add_argument(
         "--repetir", type=int, default=1, help="veces que se ejecuta cada test (1-50)"
     )
+    parser.add_argument(
+        "--modelo",
+        help=(
+            "prueba con este LLM en lugar del de agent.json, sin desplegar nada "
+            "(agent_config_override). Sirve para probar el modelo de respaldo"
+        ),
+    )
     args = parser.parse_args()
 
     bateria = json.loads(BATERIA_FILE.read_text(encoding="utf-8"))
@@ -518,8 +531,9 @@ def main() -> None:
         return
 
     agent_json = json.loads((HERE / "agent.json").read_text(encoding="utf-8"))
-    llm = agent_json["conversation_config"]["agent"]["prompt"]["llm"]
-    inv = ejecutar(el, state["agent_id"], [state["test_ids"][c] for c, _, _ in tests], args.repetir)
+    llm = args.modelo or agent_json["conversation_config"]["agent"]["prompt"]["llm"]
+    ids = [state["test_ids"][c] for c, _, _ in tests]
+    inv = ejecutar(el, state["agent_id"], ids, args.repetir, args.modelo)
     sys.exit(0 if informar(inv, tests, state, bateria, llm) else 1)
 
 

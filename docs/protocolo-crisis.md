@@ -16,24 +16,26 @@ Ante una señal de riesgo, el agente no improvisa. Deja la sesión y dice un tex
 Ante cualquiera de estas señales, aunque sea indirecta, en broma o a mitad de otra conversación:
 
 - Ideas de morir, de no querer seguir, de desaparecer, de hacerse daño o de que los demás estarían mejor sin la persona.
-- Planes, medios o fechas para hacerse daño, o haberlo intentado.
+- El deseo pasivo de morir: que le pase algo y "no pasaría nada" (un accidente, no despertar), o que no va a "estar" mucho más tiempo.
+- Planes, medios o fechas para hacerse daño (también "ya he elegido el día"), o haberlo intentado (también "lo intenté y no salió bien").
+- Estar ahora en un sitio peligroso sin explicar por qué: un puente, una azotea, una vía de tren.
 - Despedidas o frases de que no estará la próxima vez, sin un motivo claro.
 - Peligro ahora mismo: violencia, maltrato o alguien que le está haciendo daño.
 - Una respuesta distinta de "ningún día" en la pregunta 9 del PHQ-9.
 - Una herramienta del backend pide activar el protocolo.
 
-Si la frase es ambigua, el agente pregunta directamente ("¿estás pensando en hacerte daño o en no seguir viviendo?"). Si la respuesta no es un no claro, activa el protocolo. Un falso positivo es mucho menos grave que un falso negativo.
+Si una frase habla de morir, de no estar o de hacerse daño, es una señal aunque la persona diga que es broma o que no le haga caso: el agente activa el protocolo sin preguntar. Solo si la frase no habla de eso y aun así es dudosa ("ya no puedo más"), pregunta directamente ("¿estás pensando en hacerte daño o en no seguir viviendo?"). Si la respuesta no es un no claro, activa el protocolo. Un falso positivo es mucho menos grave que un falso negativo.
 
 ## Qué hace el agente
 
-1. Llama a la herramienta `registrar-riesgo`. **Primero**, antes de hablar.
+1. Llama a la herramienta `registrar-riesgo`. **Primero**, antes de hablar. Única excepción: en la pregunta 9 del PHQ-9 llama antes a `registrar-respuesta-escala`, para que la respuesta quede guardada, y justo después a `registrar-riesgo`.
 2. Para la sesión: deja la meditación, las pautas, los cuestionarios y el estoicismo, y no vuelve a ellos.
 3. Dice el **texto fijo**, palabra por palabra.
-4. Si hay violencia de pareja hacia una mujer, añade la frase del 016.
+4. En la misma respuesta, añade la frase fija del 016 (violencia de la pareja o de la expareja, sin suponer el género) o la de ANAR (menor de edad).
 5. Se queda con la persona: escucha, valida, frases cortas. Si no está a salvo, repite el 112.
-6. No cuelga. Si la persona quiere terminar, se despide con la frase fija de despedida.
+6. No termina la llamada mientras la persona siga hablando. Si la persona se despide o quiere terminar, dice la frase fija de despedida y después cuelga.
 
-"Parar la sesión" significa parar el **guion** (meditación, pautas, cuestionarios), no colgar. Cortar la llamada a alguien en crisis lo dejaría solo justo cuando más importa.
+"Parar la sesión" significa parar el **guion** (meditación, pautas, cuestionarios), no colgar. Cortar la llamada a alguien en crisis que sigue hablando lo dejaría solo justo cuando más importa. Si es la persona la que se despide, el agente se despide con el 024 y el 112 y termina (prueba de voz del 25/11/2026).
 
 ## Textos fijos
 
@@ -51,7 +53,9 @@ Cumple los tres requisitos de SSA-12:
 | Dar el 024 y el 112 | "Puedes llamar al cero veinticuatro…" / "…llama al uno uno dos." |
 | Hablar con una persona de confianza | "Y si puedes, habla también con alguien de confianza…" |
 
-**Frase adicional: violencia de pareja hacia una mujer**
+**Frase adicional: violencia de la pareja o de la expareja**
+
+El agente no supone el género de la persona: el 25/11/2026, con un usuario llamado "Alex", `claude-haiku-5-5` no daba el 016 porque la regla decía "hacia una mujer". Dar el 016 de más no hace daño; no darlo a una mujer en peligro, sí.
 
 > También puedes llamar al cero uno seis. Es gratuito y atienden las veinticuatro horas.
 
@@ -59,7 +63,11 @@ Cumple los tres requisitos de SSA-12:
 
 > Cuídate mucho. Recuerda: cero veinticuatro a cualquier hora, y uno uno dos si estás en peligro.
 
-**Menores de edad** (ya estaba en el prompt): Tera es solo para adultos; se le remite a la Fundación ANAR (900 20 20 10) y, si hay riesgo, además se aplica el protocolo.
+**Frase adicional: menor de edad con riesgo**
+
+> Como eres menor de edad, también puedes llamar a la Fundación ANAR, al nueve cero cero, veinte, veinte, diez. Es gratis y atienden a cualquier hora.
+
+**Menores de edad sin riesgo:** Tera es solo para adultos; el agente lo explica con cariño, remite a la Fundación ANAR (900 20 20 10) y termina la sesión.
 
 ### Recursos
 
