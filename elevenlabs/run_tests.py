@@ -42,10 +42,23 @@ ELEVENLABS_API = "https://api.elevenlabs.io"
 
 PREFIJO = "tera-pi"
 SEGUNDOS_POR_TURNO = 6
-# Ruta de un parámetro dentro de la llamada a la tool. Si ElevenLabs no encuentra los
-# parámetros (los tests de pautas con parámetros fallan aunque el agente acierte), prueba
-# con "body." como prefijo.
-PREFIJO_PARAMETRO = ""
+# Ruta de un parámetro dentro de la llamada a una tool webhook: "body.<parámetro>".
+# Sin prefijo, ElevenLabs responde "Parameter path 'x' not found in tool call parameters"
+# aunque el agente acierte. Comprobado el 25/11/2026 (SSA-13): "body." pasa; "", "request_body."
+# y "$." fallan. El valor esperado se compara como texto: "41" coincide con el entero 41.
+PREFIJO_PARAMETRO = "body."
+
+# Para el informe de SSA-13: qué tipos del grupo "riesgo" son explícitos (dice o describe el
+# riesgo) y cuáles implícitos (hay que deducirlo). Un tipo nuevo sin clasificar sale aparte.
+RIESGO_EXPLICITO = {"directa", "autolesion", "plan", "intento", "peligro", "aclarada", "menor"}
+RIESGO_IMPLICITO = {
+    "indirecta",
+    "coloquial",
+    "despedida",
+    "camuflada",
+    "negacion",
+    "retractacion",
+}
 
 
 def secret_from_env_or_prompt(env_name: str, label: str) -> str:
@@ -369,26 +382,57 @@ def motivo_fallo(run: dict[str, Any]) -> str:
     return f"{resumen}. Tools: {llamadas or 'ninguna'}. Dijo: «{dijo}»"
 
 
+def clase_riesgo(tipo: str) -> str:
+    if tipo in RIESGO_EXPLICITO:
+        return "explícito"
+    if tipo in RIESGO_IMPLICITO:
+        return "implícito"
+    return f"sin clasificar ({tipo})"
+
+
+def pct(ok: int, total: int) -> str:
+    return f"{100 * ok / total:.0f} %" if total else "-"
+
+
 def informar(
     inv: dict[str, Any], tests: list[tuple[str, str, dict]], state: dict, bateria: dict, llm: str
 ) -> bool:
     por_test_id = {state["test_ids"][caso]: (caso, grupo) for caso, grupo, _ in tests}
+    tipo_riesgo = {c["id"]: c["tipo"] for c in bateria["riesgo"]}
     resultados: dict[str, list[tuple[str, str, str]]] = {}
+    por_clase: dict[str, list[bool]] = {}
+    # El modelo que responde de verdad puede no ser el de agent.json: ElevenLabs puede
+    # redirigir un modelo antiguo a otro (el 25/11/2026, gemini-2.5-flash respondía como
+    # gemini-3.5-flash). Se lee de cada respuesta para que el informe diga qué se probó.
+    modelos_reales: set[str] = set()
     for run in inv["test_runs"]:
         caso, grupo = por_test_id.get(run["test_id"], (run["test_id"], "?"))
         detalle = "" if run["status"] == "passed" else motivo_fallo(run)
         resultados.setdefault(grupo, []).append((caso, run["status"], detalle))
+        if grupo == "riesgo":
+            clase = clase_riesgo(tipo_riesgo.get(caso, "?"))
+            por_clase.setdefault(clase, []).append(run["status"] == "passed")
+        for r in run.get("agent_responses") or []:
+            if r.get("producing_llm"):
+                modelos_reales.add(r["producing_llm"])
 
     lineas = [
         f"# Batería de pruebas — {datetime.now():%Y-%m-%d %H:%M}",
         "",
         f"- Agente: `{state['agent_id']}`",
-        f"- Modelo: `{llm}`",
+        f"- Modelo en agent.json: `{llm}`",
+        f"- Modelo que respondió: {', '.join(f'`{m}`' for m in sorted(modelos_reales)) or '-'}",
         f"- Repeticiones por test: {inv.get('repeat_count', 1)}",
         "",
-        "| Grupo | Bloqueante | Pasan | Resultado |",
-        "| --- | --- | --- | --- |",
+        "| Grupo | Bloqueante | Pasan | % | Resultado |",
+        "| --- | --- | --- | --- | --- |",
     ]
+    if modelos_reales and modelos_reales != {llm}:
+        lineas.insert(
+            5,
+            f"- **AVISO:** respondió un modelo distinto del configurado. El resultado vale para "
+            f"{', '.join(sorted(modelos_reales))}, no para {llm}.",
+        )
     puerta_ok = True
     fallos: list[str] = []
     for grupo, filas in resultados.items():
@@ -402,9 +446,14 @@ def informar(
             grupo_ok = ratio >= conf.get("umbral", 1.0)
         lineas.append(
             f"| {grupo} | {'sí' if conf.get('bloqueante', True) else 'no'} "
-            f"| {ok}/{len(filas)} | {'OK' if grupo_ok else 'FALLA'} |"
+            f"| {ok}/{len(filas)} | {pct(ok, len(filas))} | {'OK' if grupo_ok else 'FALLA'} |"
         )
         fallos += [f"- **{c}** ({grupo}, {s}): {d}" for c, s, d in sorted(filas) if s != "passed"]
+
+    if por_clase:
+        lineas += ["", "| Riesgo | Pasan | % |", "| --- | --- | --- |"]
+        for clase, oks in sorted(por_clase.items()):
+            lineas.append(f"| {clase} | {sum(oks)}/{len(oks)} | {pct(sum(oks), len(oks))} |")
 
     lineas += ["", f"**Puerta: {'SUPERADA' if puerta_ok else 'NO SUPERADA'}**", ""]
     if fallos:
