@@ -39,6 +39,12 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 POST_CALL_TRANSCRIPTION = "post_call_transcription"
 
+# Resumen que sustituye al del análisis en una sesión con riesgo (SSA-49). El análisis lo
+# escribe un LLM y puede citar lo que dijo la persona ("expresó pensamientos suicidas"): eso
+# no debe llegar al agente en las próximas sesiones. El agente sabe que hubo riesgo solo por
+# {{riesgo_previo}}, que caduca (docs/protocolo-crisis.md, "Sesiones siguientes").
+RISK_SESSION_SUMMARY = "Se activó el protocolo de seguridad. No se guardan detalles de esta sesión."
+
 
 @router.post("/elevenlabs", status_code=status.HTTP_200_OK)
 async def elevenlabs_webhook(
@@ -120,23 +126,8 @@ def _process_transcription(db: Session, conversation_id: str, data: dict[str, An
     if session.mood_end is None:
         session.mood_end = _valid_mood(_collected(analysis, "animo_final"))
 
-    has_guidelines = db.scalar(select(Guideline.id).where(Guideline.session_id == session.id))
-
-    # Sesión abandonada: se colgó antes del check-in (sin ánimo inicial ni final ni pautas).
-    # No se usa como memoria: su resumen ("el agente saludó…") solo ensuciaría el contexto de
-    # las siguientes sesiones. El riesgo, en cambio, se procesa siempre (más abajo).
-    if session.mood_start is None and session.mood_end is None and not has_guidelines:
-        session.status = SessionStatus.ABANDONED
-    else:
-        session.status = SessionStatus.COMPLETED
-        session.summary = analysis.get("transcript_summary") or session.summary
-
-        # Las pautas solo se crean con guardar-pauta, cuando la persona las acepta en la
-        # conversación. Antes también se extraían del análisis, pero confundía lo que la persona
-        # YA había hecho ("fui al gimnasio") con pautas nuevas.
-
-        _save_new_facts(db, session, _lines(_collected(analysis, "cosas_a_recordar")))
-
+    # El riesgo se procesa siempre, y antes que la memoria: una sesión con riesgo (por la
+    # herramienta durante la llamada o por el análisis ahora) no deja recuerdos ni resumen.
     if _collected(analysis, "riesgo_detectado") is True:
         session.risk_flag = True
         db.add(
@@ -147,6 +138,28 @@ def _process_transcription(db: Session, conversation_id: str, data: dict[str, An
                 reason="Detectado en el análisis post-llamada",
             )
         )
+
+    has_guidelines = db.scalar(select(Guideline.id).where(Guideline.session_id == session.id))
+
+    # Sesión abandonada: se colgó antes del check-in (sin ánimo inicial ni final ni pautas).
+    # No se usa como memoria: su resumen ("el agente saludó…") solo ensuciaría el contexto de
+    # las siguientes sesiones. El riesgo ya se ha procesado (más arriba).
+    if session.mood_start is None and session.mood_end is None and not has_guidelines:
+        session.status = SessionStatus.ABANDONED
+    else:
+        session.status = SessionStatus.COMPLETED
+
+        # Las pautas solo se crean con guardar-pauta, cuando la persona las acepta en la
+        # conversación. Antes también se extraían del análisis, pero confundía lo que la persona
+        # YA había hecho ("fui al gimnasio") con pautas nuevas.
+
+        if session.risk_flag:
+            # SSA-49: ni resumen del LLM ni recuerdos nuevos. Los recuerdos no caducan y el
+            # análisis puede guardar el riesgo como "cosa a recordar".
+            session.summary = RISK_SESSION_SUMMARY
+        else:
+            session.summary = analysis.get("transcript_summary") or session.summary
+            _save_new_facts(db, session, _lines(_collected(analysis, "cosas_a_recordar")))
 
 
 def _valid_mood(value: Any) -> int | None:
