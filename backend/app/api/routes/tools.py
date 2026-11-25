@@ -133,9 +133,8 @@ def register_risk(body: RiskIn, db: DbSession) -> ToolResult:
     # TODO: enviar una alerta (correo o Telegram) al responsable del proyecto.
     return ToolResult(
         mensaje=(
-            "Riesgo registrado. Sigue el protocolo de crisis: responde con calma, deja la "
-            "meditación y ofrece los recursos: 024 (atención a la conducta suicida, gratuito, "
-            "24 horas) y 112 si hay peligro inmediato."
+            "Riesgo registrado. Protocolo de crisis: deja la sesión y di ahora el texto fijo "
+            "del protocolo, completo (024 y 112), y pregunta si está a salvo. No cuelgues."
         )
     )
 

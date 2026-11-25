@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # Cuántas sesiones anteriores y cuántos recuerdos se pasan al agente.
     memory_previous_sessions: int = 3
     memory_max_facts: int = 10
+    # Días durante los que un riesgo registrado sigue cambiando el comportamiento del agente
+    # (docs/protocolo-crisis.md, "Sesiones siguientes").
+    memory_risk_days: int = 30
 
     @property
     def cors_origin_list(self) -> list[str]:

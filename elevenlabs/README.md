@@ -4,7 +4,7 @@ Configuración del agente de voz de Tera-pi. Según el [ADR-001](../docs/adr/ADR
 
 | Fichero | Qué contiene |
 | --- | --- |
-| `prompt.md` | El prompt del sistema: identidad, protocolo de crisis, ciclo de sesión, cuestionarios y herramientas |
+| `prompt.md` | El prompt del sistema: identidad, protocolo de crisis, ciclo de sesión, cuestionarios y herramientas. El texto fijo del protocolo sale de [docs/protocolo-crisis.md](../docs/protocolo-crisis.md): si cambias uno, cambia el otro y pasa la batería de riesgo |
 | `agent.json` | Voz, idioma, LLM, turnos, privacidad, límites, datos a extraer y criterios de evaluación |
 | `tools.json` | Las server tools que llaman al backend |
 | `deploy_agent.py` | Crea o actualiza en ElevenLabs el secreto, el webhook, las tools y el agente |
@@ -126,5 +126,5 @@ La voz (`SDVJaMLoJa7wc3s2sn7d`, la de "Lydia") y el modelo de voz (`eleven_v4_tu
 
 - [ ] Comparar el texto de las preguntas del PHQ-9 y el GAD-7 de `prompt.md` con la versión española validada oficial (están redactadas para leerse en voz alta).
 - [ ] Confirmar la licencia del PSS-10. Hasta entonces el agente no lo propone; el backend sí sabe puntuarlo.
-- [ ] Que un psicólogo colegiado revise el protocolo de crisis y los recursos.
+- [ ] Que un psicólogo colegiado revise el protocolo de crisis y los recursos ([docs/protocolo-crisis.md](../docs/protocolo-crisis.md), SSA-18).
 - [ ] Reducir `retention_days` cuando ya no haga falta revisar las conversaciones en el panel.
