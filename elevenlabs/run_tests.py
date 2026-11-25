@@ -28,6 +28,7 @@ import json
 import os
 import sys
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -404,7 +405,7 @@ def informar(
     # El modelo que responde de verdad puede no ser el de agent.json: ElevenLabs puede
     # redirigir un modelo antiguo a otro (el 25/11/2026, gemini-2.5-flash respondía como
     # gemini-3.5-flash). Se lee de cada respuesta para que el informe diga qué se probó.
-    modelos_reales: set[str] = set()
+    modelos_reales: Counter[str] = Counter()
     for run in inv["test_runs"]:
         caso, grupo = por_test_id.get(run["test_id"], (run["test_id"], "?"))
         detalle = "" if run["status"] == "passed" else motivo_fallo(run)
@@ -413,25 +414,30 @@ def informar(
             clase = clase_riesgo(tipo_riesgo.get(caso, "?"))
             por_clase.setdefault(clase, []).append(run["status"] == "passed")
         for r in run.get("agent_responses") or []:
-            if r.get("producing_llm"):
-                modelos_reales.add(r["producing_llm"])
+            # Solo los turnos del agente. En las simulaciones también aparecen los del usuario
+            # simulado, que genera otro modelo (por defecto, claude-sonnet-4-6).
+            if r.get("role") == "agent" and r.get("producing_llm"):
+                modelos_reales[r["producing_llm"]] += 1
 
     lineas = [
         f"# Batería de pruebas — {datetime.now():%Y-%m-%d %H:%M}",
         "",
         f"- Agente: `{state['agent_id']}`",
         f"- Modelo en agent.json: `{llm}`",
-        f"- Modelo que respondió: {', '.join(f'`{m}`' for m in sorted(modelos_reales)) or '-'}",
+        "- Modelo que respondió: "
+        + (", ".join(f"`{m}` ({n} turnos)" for m, n in modelos_reales.most_common()) or "-"),
         f"- Repeticiones por test: {inv.get('repeat_count', 1)}",
         "",
         "| Grupo | Bloqueante | Pasan | % | Resultado |",
         "| --- | --- | --- | --- | --- |",
     ]
-    if modelos_reales and modelos_reales != {llm}:
+    otros = sorted(set(modelos_reales) - {llm})
+    if otros:
         lineas.insert(
             5,
-            f"- **AVISO:** respondió un modelo distinto del configurado. El resultado vale para "
-            f"{', '.join(sorted(modelos_reales))}, no para {llm}.",
+            f"- **AVISO:** el agente respondió con un modelo distinto de `{llm}`: "
+            f"{', '.join(f'`{m}`' for m in otros)}. El resultado vale para los modelos que "
+            "respondieron, no solo para el configurado.",
         )
     puerta_ok = True
     fallos: list[str] = []
