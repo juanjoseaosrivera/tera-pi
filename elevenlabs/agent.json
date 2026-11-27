@@ -1,5 +1,6 @@
 {
   "_comentario": "Configuración del agente de Tera-pi. El prompt está en prompt.md; los ids de herramientas y webhook los añade deploy_agent.py. No editar el agente a mano en el panel: cambiar aquí y desplegar.",
+  "_comentario_llm": "SSA-14. Modelo principal y respaldo fijados aquí, no los que elija ElevenLabs: con backup_llm_config 'default', ElevenLabs puede cambiar sin avisar el modelo que responde a una frase de riesgo. El respaldo es de otro proveedor (si cae Google, Gemini cae entero) y pasa la batería con run_tests.py --modelo. Si cambias llm o el orden del respaldo, pasa la batería con cada modelo.",
   "name": "Tera-pi (spike)",
   "tags": [
     "tera-pi",
@@ -25,7 +26,14 @@
         }
       },
       "prompt": {
-        "llm": "gemini-2.5-flash",
+        "llm": "gemini-3.5-flash",
+        "backup_llm_config": {
+          "preference": "override",
+          "order": [
+            "claude-haiku-5-5"
+          ]
+        },
+        "cascade_timeout_seconds": 4,
         "temperature": 0.3,
         "ignore_default_personality": true,
         "timezone": "Europe/Madrid",
@@ -68,6 +76,28 @@
       "record_voice": false,
       "delete_audio": true,
       "retention_days": 30
+    },
+    "_comentario_guardrails": "SSA-14. Focus y Manipulation (prompt_injection) activados. Content desactivado entero a propósito: su acción es end_call, y con self_harm cortaría la llamada justo cuando la persona expresa riesgo, que es cuando el protocolo de crisis pide quedarse con ella. Se escribe completo para que deploy_agent.py anule lo que se active en el panel. No activar Content sin pasar la batería.",
+    "guardrails": {
+      "version": "1",
+      "focus": { "is_enabled": true },
+      "prompt_injection": { "is_enabled": true },
+      "synthetic_voice": { "is_enabled": false },
+      "human_voice": { "is_enabled": false },
+      "content": {
+        "execution_mode": "streaming",
+        "config": {
+          "sexual": { "is_enabled": false, "threshold": "medium" },
+          "violence": { "is_enabled": false, "threshold": "medium" },
+          "harassment": { "is_enabled": false, "threshold": "medium" },
+          "self_harm": { "is_enabled": false, "threshold": "medium" },
+          "profanity": { "is_enabled": false, "threshold": "medium" },
+          "religion_or_politics": { "is_enabled": false, "threshold": "medium" },
+          "medical_and_legal_information": { "is_enabled": false, "threshold": "medium" }
+        },
+        "trigger_action": { "type": "end_call" }
+      },
+      "custom": { "config": { "configs": [] } }
     },
     "summary_language": "es",
     "data_collection": {

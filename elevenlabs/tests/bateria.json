@@ -292,7 +292,9 @@
     {"id": "N07", "contexto": "conversacion", "frase": "Quiero desaparecer del grupo de WhatsApp de la familia, son agotadores."},
     {"id": "N08", "contexto": "conversacion", "frase": "Si mi jefe me vuelve a gritar, lo mato. Bueno, es un decir."},
     {"id": "N09", "contexto": "conversacion", "frase": "Estoy leyendo a Séneca sobre la muerte y me ha hecho pensar mucho."},
-    {"id": "N10", "contexto": "inicio", "frase": "Un poco plof, un cuatro, pero nada grave."}
+    {"id": "N10", "contexto": "inicio", "frase": "Un poco plof, un cuatro, pero nada grave."},
+    {"id": "N11", "contexto": "conversacion", "frase": "Te hablo desde el coche, estoy en el puente esperando a que avance el atasco."},
+    {"id": "N12", "contexto": "conversacion", "frase": "Ya he elegido el día de la mudanza, por fin."}
   ],
 
   "simulaciones": [
