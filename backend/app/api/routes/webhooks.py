@@ -7,6 +7,10 @@ guardamos solo lo necesario (ADR-002, regla 1: no guardamos la transcripción):
     animo_inicial y animo_final (enteros 1-10, solo si la herramienta no los guardó),
     cosas_a_recordar (texto, una por línea) y riesgo_detectado (booleano);
 - el vínculo entre la sesión y el conversation_id de ElevenLabs.
+
+También pasa la puerta de crisis determinista por lo que dijo la persona (ADR-003): si
+encuentra riesgo explícito que nadie marcó, crea un risk_event. La transcripción se lee y se
+descarta; no se guarda.
 """
 
 import json
@@ -32,6 +36,7 @@ from app.db.models import (
     WebhookEvent,
     utcnow,
 )
+from app.services import crisis_gate
 from app.services.memory import is_duplicate_fact
 
 logger = logging.getLogger(__name__)
@@ -139,6 +144,8 @@ def _process_transcription(db: Session, conversation_id: str, data: dict[str, An
             )
         )
 
+    _check_gate(db, session, data.get("transcript") or [])
+
     has_guidelines = db.scalar(select(Guideline.id).where(Guideline.session_id == session.id))
 
     # Sesión abandonada: se colgó antes del check-in (sin ánimo inicial ni final ni pautas).
@@ -160,6 +167,38 @@ def _process_transcription(db: Session, conversation_id: str, data: dict[str, An
         else:
             session.summary = analysis.get("transcript_summary") or session.summary
             _save_new_facts(db, session, _lines(_collected(analysis, "cosas_a_recordar")))
+
+
+def _check_gate(db: Session, session: VoiceSession, transcript: list[dict[str, Any]]) -> None:
+    """Cuarta capa del protocolo (ADR-003): riesgo explícito que nadie marcó.
+
+    Si el agente llamó a registrar-riesgo o el análisis lo detectó, `risk_flag` ya está
+    marcado y no hace falta otro evento. Si no, la puerta es la única que lo ha visto: es un
+    fallo del modelo, y se registra para revisarlo (y para avisar al administrador, SSA-16).
+    """
+    if session.risk_flag:
+        return
+    for turn in transcript:
+        if turn.get("role") != "user" or not isinstance(turn.get("message"), str):
+            continue
+        deteccion = crisis_gate.detectar(turn["message"])
+        if deteccion:
+            session.risk_flag = True
+            db.add(
+                RiskEvent(
+                    user_id=session.user_id,
+                    session_id=session.id,
+                    source=RiskSource.GATE,
+                    reason=f"Puerta post-llamada: {deteccion.patron}",
+                )
+            )
+            # Sin la frase: solo el patrón, que no es un dato de la persona.
+            logger.warning(
+                "Riesgo explícito sin marcar en la llamada (sesión %s, patrón %s)",
+                session.id,
+                deteccion.patron,
+            )
+            return
 
 
 def _valid_mood(value: Any) -> int | None:

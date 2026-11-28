@@ -53,6 +53,8 @@ Motivos: es la vía más simple para el MVP, no exige un segundo proveedor ni ot
 
 **Condición para revisar esta decisión:** antes de abrir Tera-pi a usuarios reales fuera del círculo de pruebas, se escribirá un ADR nuevo para valorar el paso a la opción B (Custom LLM), que es la que da una puerta de crisis determinista. El backend se diseña desde ya para que ese paso sea pequeño.
 
+> **Revisada el 28/11/2026 en [ADR-003](ADR-003-custom-llm.md):** se mantiene la opción A. La puerta determinista se pasa después de la llamada, en el webhook (cuarta capa del protocolo).
+
 ### Cómo funciona una sesión
 
 ```mermaid
@@ -83,7 +85,7 @@ sequenceDiagram
 2. **El navegador nunca ve la API key de ElevenLabs:** agente privado y *signed URL* generada por el backend.
 3. **El webhook post-llamada se valida siempre** con la firma `ElevenLabs-Signature` y su marca de tiempo.
 4. **Se desactiva el envío y la grabación de audio** y se revisan los ajustes de retención del agente: no guardamos audio (minimización de datos).
-5. **El protocolo de crisis en la opción A tiene tres capas**, todas imperfectas, que se combinan:
+5. **El protocolo de crisis en la opción A tiene tres capas**, todas imperfectas, que se combinan (ADR-003 añade una cuarta: la puerta determinista post-llamada):
     - Reglas explícitas en el prompt: ante cualquier señal de riesgo, el agente deja de meditar, responde con el texto del protocolo y da los recursos (024, 112).
     - Herramienta obligatoria `registrar_riesgo`, que el agente debe llamar en ese caso; el backend la registra y alerta.
     - Criterio de evaluación "riesgo detectado" en el análisis post-llamada, para cazar casos que el agente no marcó durante la conversación.
@@ -99,7 +101,7 @@ sequenceDiagram
 
 **Negativas y cómo las mitigamos**
 
-- **La seguridad depende del modelo.** Se mitiga con las tres capas y la batería de pruebas, y queda como riesgo abierto hasta revisar la decisión antes de tener usuarios reales.
+- **La seguridad depende del modelo.** Se mitiga con las capas del protocolo y la batería de pruebas. Revisado en ADR-003: se acepta, con la puerta determinista post-llamada como cuarta capa.
 - **ElevenLabs y el proveedor del LLM tratan la conversación.** Se minimiza lo que se guarda en su lado. La residencia en la UE y el *Zero Retention Mode* requieren el plan Enterprise.
 - **Dependencia del proveedor.** Se mitiga con la configuración en git y el backend desacoplado.
 

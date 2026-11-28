@@ -594,3 +594,54 @@ def test_next_session_after_risk_has_no_risk_details(
     assert variables["riesgo_previo"] == "sí, en la última sesión"
     assert "suicid" not in variables["resumen_previo"]
     assert "seguir viviendo" not in variables["cosas_a_recordar"]
+
+
+# --- Puerta de crisis en el webhook (ADR-003) -----------------------------------
+
+
+def _payload_with_transcript(session_id: str, *user_messages: str) -> bytes:
+    payload = json.loads(webhook_payload(session_id))
+    payload["data"]["transcript"] = [
+        {"role": "agent", "message": "Hola, ¿qué tal estás?"},
+        *({"role": "user", "message": m} for m in user_messages),
+        {"role": "agent", "message": None, "tool_calls": [{"tool_name": "end_call"}]},
+    ]
+    return json.dumps(payload).encode()
+
+
+def test_gate_catches_risk_nobody_marked(client, db_session, voice_session):
+    # Ni la herramienta ni el análisis marcaron el riesgo: solo lo ve la puerta.
+    body = _payload_with_transcript(voice_session.id, "Bien.", "A veces pienso en matarme.")
+    post_webhook(client, body)
+
+    db_session.refresh(voice_session)
+    assert voice_session.risk_flag is True
+    event = db_session.query(RiskEvent).one()
+    assert event.source == "gate"
+    assert event.reason == "Puerta post-llamada: morir_primera_persona"
+    # Una sesión con riesgo no deja resumen del LLM ni recuerdos (SSA-49).
+    assert voice_session.summary == webhooks.RISK_SESSION_SUMMARY
+    assert db_session.query(MemoryFact).count() == 0
+
+
+def test_gate_adds_nothing_when_the_tool_marked_risk(client, db_session, voice_session):
+    client.post(
+        "/tools/registrar-riesgo",
+        json={"session_id": voice_session.id, "motivo": "x"},
+        headers=TOOL_HEADERS,
+    )
+    post_webhook(client, _payload_with_transcript(voice_session.id, "Quiero morirme."))
+    assert [e.source for e in db_session.query(RiskEvent).all()] == ["tool"]
+
+
+def test_gate_ignores_harmless_phrases(client, db_session, voice_session):
+    body = _payload_with_transcript(
+        voice_session.id,
+        "Me muero de ganas de que llegue el viernes.",
+        "Me hice daño en la rodilla.",
+    )
+    post_webhook(client, body)
+
+    db_session.refresh(voice_session)
+    assert voice_session.risk_flag is False
+    assert db_session.query(RiskEvent).count() == 0

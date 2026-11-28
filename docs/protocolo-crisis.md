@@ -1,7 +1,7 @@
 # Protocolo de crisis
 
 > **Estado:** versión 1, pendiente de revisión por un psicólogo colegiado ([SSA-18](https://linear.app/ssapp2/issue/SSA-18)).
-> **No cambies el texto fijo sin volver a pasar la batería de riesgo** ([SSA-14](https://linear.app/ssapp2/issue/SSA-14)) y sin cambiarlo a la vez en `elevenlabs/prompt.md`.
+> **No cambies el texto fijo sin volver a pasar la batería de riesgo** ([SSA-14](https://linear.app/ssapp2/issue/SSA-14)) y sin cambiarlo a la vez en `elevenlabs/prompt.md` y en `backend/app/services/crisis_gate.py` (un test del backend comprueba que coinciden).
 
 ## Por qué un texto fijo
 
@@ -80,15 +80,16 @@ El agente no supone el género de la persona: el 25/11/2026, con un usuario llam
 
 El texto no dice que las llamadas sean "confidenciales" ni que "no avisan a nadie": son condiciones que puede cambiar cada servicio y no las controlamos.
 
-## Las tres capas de seguridad
+## Las cuatro capas de seguridad
 
-Una sola capa puede fallar. Por eso hay tres, y cada una cubre los fallos de la anterior:
+Una sola capa puede fallar. Por eso hay cuatro, y cada una cubre los fallos de la anterior:
 
 | Capa | Dónde | Qué cubre |
 | --- | --- | --- |
 | 1. Regla del prompt | `elevenlabs/prompt.md`, sección "Seguridad" | El agente para la sesión, llama a la tool y dice el texto fijo. Es la que actúa durante la llamada. |
 | 2. Tool `registrar-riesgo` | `elevenlabs/tools.json` → `POST /tools/registrar-riesgo` | Marca `risk_flag` en la sesión y crea un `risk_event` con `source = tool`. Su respuesta le recuerda al agente que diga el texto fijo. |
 | 3. Criterio post-llamada `protocolo_crisis` | `elevenlabs/agent.json`, `evaluation.criteria` | Al colgar, ElevenLabs revisa la conversación entera y marca si el protocolo se cumplió. Detecta los casos en que el agente falló. |
+| 4. Puerta determinista post-llamada | `backend/app/services/crisis_gate.py`, desde el webhook | Al colgar, el backend busca frases de riesgo explícitas en lo que dijo la persona, sin LLM. Si encuentra una y nadie marcó el riesgo, crea un `risk_event` con `source = gate`. Es la única capa que no depende del modelo ([ADR-003](adr/ADR-003-custom-llm.md)). |
 
 Además, el dato `riesgo_detectado` (`data_collection`) hace que el webhook cree un `risk_event` con `source = post_call` aunque el agente no llamara a la tool. Y el backend crea uno con `source = phq9_item9` si la pregunta 9 del PHQ-9 no es 0.
 
