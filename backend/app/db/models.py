@@ -70,6 +70,8 @@ class RiskSource(StrEnum):
     TOOL = "tool"
     POST_CALL = "post_call"
     PHQ9_ITEM9 = "phq9_item9"
+    # Puerta determinista sobre la transcripción, cuando nadie marcó el riesgo (ADR-003).
+    GATE = "gate"
 
 
 class ConsentKind(StrEnum):
