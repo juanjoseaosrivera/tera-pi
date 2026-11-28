@@ -49,6 +49,23 @@ class Settings(BaseSettings):
     # la parte del email antes de la @. Desaparecerá con el registro de verdad.
     dev_auth_display_name: str = ""
 
+    # SPIKE de la opción B (ADR-003, SSA-19): endpoint /llm/v1/chat/completions que ElevenLabs
+    # llama en cada turno. Desactivado por defecto; el agente de producción no lo usa.
+    custom_llm_enabled: bool = False
+    # Secreto que ElevenLabs envía como "Authorization: Bearer <secreto>". El mismo valor va
+    # en el secreto del workspace de ElevenLabs que elijas como API key del Custom LLM.
+    custom_llm_secret: SecretStr | None = None
+    # API key de Gemini (Google AI Studio) y modelo al que se reenvían los turnos.
+    gemini_api_key: SecretStr | None = None
+    custom_llm_upstream_base: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    custom_llm_model: str = "gemini-3.5-flash"
+    # Vacío: no se envía y el modelo usa su valor por defecto. Opciones: minimal, low...
+    custom_llm_reasoning_effort: str = ""
+    # Precios en USD por millón de tokens, solo para estimar el coste en las métricas.
+    custom_llm_price_input: float = 1.50
+    custom_llm_price_cached: float = 0.15
+    custom_llm_price_output: float = 9.00
+
     # Cuántas sesiones anteriores y cuántos recuerdos se pasan al agente.
     memory_previous_sessions: int = 3
     memory_max_facts: int = 10
@@ -65,6 +82,19 @@ class Settings(BaseSettings):
         return frozenset(
             e.strip().lower() for e in self.dev_auth_allowed_emails.split(",") if e.strip()
         )
+
+    @model_validator(mode="after")
+    def _custom_llm_needs_secrets(self) -> "Settings":
+        if not self.custom_llm_enabled:
+            return self
+        secret = self.custom_llm_secret.get_secret_value() if self.custom_llm_secret else ""
+        if len(secret) < 32:
+            raise ValueError(
+                "CUSTOM_LLM_ENABLED=true exige CUSTOM_LLM_SECRET de 32 caracteres o más"
+            )
+        if not self.gemini_api_key or not self.gemini_api_key.get_secret_value():
+            raise ValueError("CUSTOM_LLM_ENABLED=true exige GEMINI_API_KEY")
+        return self
 
     @model_validator(mode="after")
     def _dev_auth_needs_allowlist_in_production(self) -> "Settings":

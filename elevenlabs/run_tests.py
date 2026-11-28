@@ -8,6 +8,7 @@ Uso (desde la carpeta backend/, que ya tiene httpx instalado):
     uv run python ../elevenlabs/run_tests.py --grupo riesgo        # solo un grupo
     uv run python ../elevenlabs/run_tests.py --repetir 3           # cada test 3 veces
     uv run python ../elevenlabs/run_tests.py --modelo claude-haiku-5-5   # otro LLM, sin desplegar
+    uv run python ../elevenlabs/run_tests.py --agente agent_... --etiqueta custom-llm  # spike
 
 Qué hace:
 
@@ -402,7 +403,12 @@ def pct(ok: int, total: int) -> str:
 
 
 def informar(
-    inv: dict[str, Any], tests: list[tuple[str, str, dict]], state: dict, bateria: dict, llm: str
+    inv: dict[str, Any],
+    tests: list[tuple[str, str, dict]],
+    state: dict,
+    bateria: dict,
+    llm: str,
+    agent_id: str,
 ) -> bool:
     por_test_id = {state["test_ids"][caso]: (caso, grupo) for caso, grupo, _ in tests}
     tipo_riesgo = {c["id"]: c["tipo"] for c in bateria["riesgo"]}
@@ -428,7 +434,7 @@ def informar(
     lineas = [
         f"# Batería de pruebas — {datetime.now():%Y-%m-%d %H:%M}",
         "",
-        f"- Agente: `{state['agent_id']}`",
+        f"- Agente: `{agent_id}`",
         f"- Modelo probado: `{llm}`",
         "- Modelo que respondió: "
         + (", ".join(f"`{m}` ({n} turnos)" for m, n in modelos_reales.most_common()) or "-"),
@@ -497,6 +503,17 @@ def main() -> None:
             "(agent_config_override). Sirve para probar el modelo de respaldo"
         ),
     )
+    parser.add_argument(
+        "--agente",
+        help=(
+            "ejecuta contra este agente en lugar del de state.json. Sirve para el agente del "
+            "spike de ADR-003 (Custom LLM), que no se gestiona con deploy_agent.py"
+        ),
+    )
+    parser.add_argument(
+        "--etiqueta",
+        help="nombre del modelo en el informe (por defecto, el de agent.json o --modelo)",
+    )
     args = parser.parse_args()
 
     bateria = json.loads(BATERIA_FILE.read_text(encoding="utf-8"))
@@ -531,10 +548,13 @@ def main() -> None:
         return
 
     agent_json = json.loads((HERE / "agent.json").read_text(encoding="utf-8"))
-    llm = args.modelo or agent_json["conversation_config"]["agent"]["prompt"]["llm"]
+    llm = (
+        args.etiqueta or args.modelo or agent_json["conversation_config"]["agent"]["prompt"]["llm"]
+    )
+    agent_id = args.agente or state["agent_id"]
     ids = [state["test_ids"][c] for c, _, _ in tests]
-    inv = ejecutar(el, state["agent_id"], ids, args.repetir, args.modelo)
-    sys.exit(0 if informar(inv, tests, state, bateria, llm) else 1)
+    inv = ejecutar(el, agent_id, ids, args.repetir, args.modelo)
+    sys.exit(0 if informar(inv, tests, state, bateria, llm, agent_id) else 1)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import health, sessions, tools, webhooks
+from app.api.routes import custom_llm, health, sessions, tools, webhooks
 from app.core.config import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -38,6 +38,8 @@ def create_app() -> FastAPI:
     app.include_router(sessions.router)
     app.include_router(tools.router)
     app.include_router(webhooks.router)
+    # Spike de ADR-003: responde 404 mientras CUSTOM_LLM_ENABLED sea false.
+    app.include_router(custom_llm.router)
     return app
 
 
