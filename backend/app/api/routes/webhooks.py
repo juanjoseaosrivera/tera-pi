@@ -4,8 +4,8 @@ Al terminar cada conversación, ElevenLabs envía la transcripción y el anális
 guardamos solo lo necesario (ADR-002, regla 1: no guardamos la transcripción):
 - el resumen de la conversación;
 - los datos extraídos configurados en el agente (data collection):
-    animo_final (entero 1-10), pautas_acordadas (texto, una por línea),
-    cosas_a_recordar (texto, una por línea), riesgo_detectado (booleano);
+    animo_inicial y animo_final (enteros 1-10, solo si la herramienta no los guardó),
+    cosas_a_recordar (texto, una por línea) y riesgo_detectado (booleano);
 - el vínculo entre la sesión y el conversation_id de ElevenLabs.
 """
 
@@ -32,11 +32,18 @@ from app.db.models import (
     WebhookEvent,
     utcnow,
 )
+from app.services.memory import is_duplicate_fact
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 POST_CALL_TRANSCRIPTION = "post_call_transcription"
+
+# Resumen que sustituye al del análisis en una sesión con riesgo (SSA-49). El análisis lo
+# escribe un LLM y puede citar lo que dijo la persona ("expresó pensamientos suicidas"): eso
+# no debe llegar al agente en las próximas sesiones. El agente sabe que hubo riesgo solo por
+# {{riesgo_previo}}, que caduca (docs/protocolo-crisis.md, "Sesiones siguientes").
+RISK_SESSION_SUMMARY = "Se activó el protocolo de seguridad. No se guardan detalles de esta sesión."
 
 
 @router.post("/elevenlabs", status_code=status.HTTP_200_OK)
@@ -110,24 +117,17 @@ def _process_transcription(db: Session, conversation_id: str, data: dict[str, An
 
     analysis = data.get("analysis") or {}
     session.elevenlabs_conversation_id = conversation_id
-    session.status = SessionStatus.COMPLETED
     session.ended_at = utcnow()
-    session.summary = analysis.get("transcript_summary") or session.summary
 
-    # El ánimo final por herramienta tiene prioridad; el análisis es la red de seguridad.
-    mood = _collected(analysis, "animo_final")
-    if session.mood_end is None and isinstance(mood, int | float) and 1 <= mood <= 10:
-        session.mood_end = int(mood)
+    # El ánimo guardado por herramienta tiene prioridad; el análisis es la red de seguridad
+    # (por ejemplo, si la llamada a registrar-animo se canceló porque la persona siguió hablando).
+    if session.mood_start is None:
+        session.mood_start = _valid_mood(_collected(analysis, "animo_inicial"))
+    if session.mood_end is None:
+        session.mood_end = _valid_mood(_collected(analysis, "animo_final"))
 
-    # Si el agente no guardó pautas durante la llamada, usamos las extraídas al final.
-    has_guidelines = db.scalar(select(Guideline.id).where(Guideline.session_id == session.id))
-    if not has_guidelines:
-        for text in _lines(_collected(analysis, "pautas_acordadas")):
-            db.add(Guideline(user_id=session.user_id, session_id=session.id, text=text))
-
-    for fact in _lines(_collected(analysis, "cosas_a_recordar")):
-        db.add(MemoryFact(user_id=session.user_id, session_id=session.id, fact=fact))
-
+    # El riesgo se procesa siempre, y antes que la memoria: una sesión con riesgo (por la
+    # herramienta durante la llamada o por el análisis ahora) no deja recuerdos ni resumen.
     if _collected(analysis, "riesgo_detectado") is True:
         session.risk_flag = True
         db.add(
@@ -138,3 +138,52 @@ def _process_transcription(db: Session, conversation_id: str, data: dict[str, An
                 reason="Detectado en el análisis post-llamada",
             )
         )
+
+    has_guidelines = db.scalar(select(Guideline.id).where(Guideline.session_id == session.id))
+
+    # Sesión abandonada: se colgó antes del check-in (sin ánimo inicial ni final ni pautas).
+    # No se usa como memoria: su resumen ("el agente saludó…") solo ensuciaría el contexto de
+    # las siguientes sesiones. El riesgo ya se ha procesado (más arriba).
+    if session.mood_start is None and session.mood_end is None and not has_guidelines:
+        session.status = SessionStatus.ABANDONED
+    else:
+        session.status = SessionStatus.COMPLETED
+
+        # Las pautas solo se crean con guardar-pauta, cuando la persona las acepta en la
+        # conversación. Antes también se extraían del análisis, pero confundía lo que la persona
+        # YA había hecho ("fui al gimnasio") con pautas nuevas.
+
+        if session.risk_flag:
+            # SSA-49: ni resumen del LLM ni recuerdos nuevos. Los recuerdos no caducan y el
+            # análisis puede guardar el riesgo como "cosa a recordar".
+            session.summary = RISK_SESSION_SUMMARY
+        else:
+            session.summary = analysis.get("transcript_summary") or session.summary
+            _save_new_facts(db, session, _lines(_collected(analysis, "cosas_a_recordar")))
+
+
+def _valid_mood(value: Any) -> int | None:
+    """El ánimo del análisis, si es un número del 1 al 10; si no, None."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return int(value) if 1 <= value <= 10 else None
+
+
+def _save_new_facts(db: Session, session: VoiceSession, facts: list[str]) -> None:
+    """Guarda solo los recuerdos que no se parecen a uno que ya teníamos.
+
+    El análisis a veces repite lo que el agente ya sabía (se lo recordó en voz alta a la
+    persona), así que no basta con fiarse de él.
+    """
+    known = list(
+        db.scalars(
+            select(MemoryFact.fact).where(
+                MemoryFact.user_id == session.user_id, MemoryFact.active.is_(True)
+            )
+        )
+    )
+    for fact in facts:
+        if is_duplicate_fact(fact, known):
+            continue
+        db.add(MemoryFact(user_id=session.user_id, session_id=session.id, fact=fact))
+        known.append(fact)

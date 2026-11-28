@@ -5,6 +5,7 @@ from datetime import timedelta
 import pytest
 from pydantic import SecretStr, ValidationError
 
+from app.api.routes import webhooks
 from app.core.config import Settings, get_settings
 from app.db.models import (
     Guideline,
@@ -13,6 +14,7 @@ from app.db.models import (
     Scale,
     ScaleResult,
     SessionStatus,
+    User,
     VoiceSession,
     utcnow,
 )
@@ -60,7 +62,8 @@ def test_start_session_includes_previous_memory(client, db_session, voice_sessio
 
     assert variables["es_primera_sesion"] == "no"
     assert "estrés en el trabajo" in variables["resumen_previo"]
-    assert "Caminar" in variables["pautas_pendientes"]
+    guideline_id = db_session.query(Guideline).one().id
+    assert f"[{guideline_id}] Caminar" in variables["pautas_pendientes"]
     assert "Trabaja de noche" in variables["cosas_a_recordar"]
     assert "3→6" in variables["tendencia_animo"]
 
@@ -173,6 +176,90 @@ def test_save_guideline(client, db_session, voice_session):
     assert db_session.query(Guideline).one().text == "Escribir tres cosas buenas"
 
 
+def _previous_guideline(db_session, voice_session, text="Caminar"):
+    """Pauta de una sesión anterior del mismo usuario que `voice_session`."""
+    previous = VoiceSession(user_id=voice_session.user_id, status=SessionStatus.COMPLETED)
+    db_session.add(previous)
+    db_session.flush()
+    guideline = Guideline(user_id=voice_session.user_id, session_id=previous.id, text=text)
+    db_session.add(guideline)
+    db_session.commit()
+    return guideline
+
+
+@pytest.mark.parametrize("estado", ["done", "partial", "dropped"])
+def test_review_guideline(client, db_session, voice_session, estado):
+    guideline = _previous_guideline(db_session, voice_session)
+    response = client.post(
+        "/tools/revisar-pauta",
+        json={"session_id": voice_session.id, "pauta_id": guideline.id, "estado": estado},
+        headers=TOOL_HEADERS,
+    )
+    assert response.status_code == 200
+    db_session.refresh(guideline)
+    assert guideline.status == estado
+    assert guideline.reviewed_in_session_id == voice_session.id
+
+
+def test_reviewed_guideline_is_no_longer_pending(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    done = _previous_guideline(db_session, voice_session, "Caminar")
+    _previous_guideline(db_session, voice_session, "Leer")
+    client.post(
+        "/tools/revisar-pauta",
+        json={"session_id": voice_session.id, "pauta_id": done.id, "estado": "done"},
+        headers=TOOL_HEADERS,
+    )
+    variables = client.post(
+        "/api/sesiones", headers={"X-Dev-User-Email": "laura@example.com"}
+    ).json()["dynamic_variables"]
+    assert "Caminar" not in variables["pautas_pendientes"]
+    assert "Leer" in variables["pautas_pendientes"]
+
+
+def test_review_guideline_of_another_user_is_rejected(client, db_session, voice_session):
+    other = User(email="otro@example.com", display_name="Otro", is_adult_confirmed=True)
+    db_session.add(other)
+    db_session.flush()
+    other_session = VoiceSession(user_id=other.id)
+    db_session.add(other_session)
+    db_session.flush()
+    foreign = Guideline(user_id=other.id, session_id=other_session.id, text="Ajena")
+    db_session.add(foreign)
+    db_session.commit()
+
+    response = client.post(
+        "/tools/revisar-pauta",
+        json={"session_id": voice_session.id, "pauta_id": foreign.id, "estado": "done"},
+        headers=TOOL_HEADERS,
+    )
+    assert response.status_code == 404
+    db_session.refresh(foreign)
+    assert foreign.status == "pending"
+
+
+def test_review_guideline_from_same_session_is_rejected(client, db_session, voice_session):
+    fresh = Guideline(user_id=voice_session.user_id, session_id=voice_session.id, text="Nueva")
+    db_session.add(fresh)
+    db_session.commit()
+    response = client.post(
+        "/tools/revisar-pauta",
+        json={"session_id": voice_session.id, "pauta_id": fresh.id, "estado": "done"},
+        headers=TOOL_HEADERS,
+    )
+    assert response.status_code == 409
+
+
+def test_review_guideline_validates_estado(client, db_session, voice_session):
+    guideline = _previous_guideline(db_session, voice_session)
+    response = client.post(
+        "/tools/revisar-pauta",
+        json={"session_id": voice_session.id, "pauta_id": guideline.id, "estado": "hecha"},
+        headers=TOOL_HEADERS,
+    )
+    assert response.status_code == 422
+
+
 def test_register_risk(client, db_session, voice_session):
     body = {"session_id": voice_session.id, "motivo": "Expresa desesperanza"}
     response = client.post("/tools/registrar-riesgo", json=body, headers=TOOL_HEADERS)
@@ -223,7 +310,9 @@ def webhook_payload(session_id: str) -> bytes:
                 "analysis": {
                     "transcript_summary": "Habló del trabajo y le ayudó la respiración.",
                     "data_collection_results": {
+                        "animo_inicial": collected("animo_inicial", 5),
                         "animo_final": collected("animo_final", 7),
+                        # Ya no se usa, pero un agente con la configuración antigua aún lo envía.
                         "pautas_acordadas": collected("pautas_acordadas", "- Caminar\n- Leer"),
                         "cosas_a_recordar": collected("cosas_a_recordar", "Tiene un perro"),
                         "riesgo_detectado": collected("riesgo_detectado", False),
@@ -255,9 +344,10 @@ def test_webhook_processes_session(client, db_session, voice_session):
     db_session.refresh(voice_session)
     assert voice_session.status == SessionStatus.COMPLETED
     assert voice_session.elevenlabs_conversation_id == "conv_123"
-    assert voice_session.mood_end == 7
+    assert (voice_session.mood_start, voice_session.mood_end) == (5, 7)
     assert voice_session.summary.startswith("Habló del trabajo")
-    assert [g.text for g in db_session.query(Guideline).all()] == ["Caminar", "Leer"]
+    # Las pautas solo se crean con guardar-pauta: el análisis no las inventa.
+    assert db_session.query(Guideline).count() == 0
     assert db_session.query(MemoryFact).one().fact == "Tiene un perro"
     assert db_session.query(RiskEvent).count() == 0
 
@@ -266,9 +356,241 @@ def test_webhook_is_idempotent(client, db_session, voice_session):
     body = webhook_payload(voice_session.id)
     post_webhook(client, body)
     assert post_webhook(client, body).json() == {"status": "duplicate"}
-    assert db_session.query(Guideline).count() == 2
+    assert db_session.query(MemoryFact).count() == 1
 
 
 def test_webhook_ignores_other_events(client):
     body = json.dumps({"type": "post_call_audio", "data": {"conversation_id": "c"}}).encode()
     assert post_webhook(client, body).json() == {"status": "ignored"}
+
+
+def test_webhook_skips_known_memory_facts(client, db_session, voice_session):
+    # El análisis repite, con otras palabras, algo que ya sabíamos, y añade un dato nuevo.
+    db_session.add(
+        MemoryFact(user_id=voice_session.user_id, fact="Le cansa estar mucho tiempo en casa.")
+    )
+    db_session.commit()
+    payload = json.loads(webhook_payload(voice_session.id))
+    payload["data"]["analysis"]["data_collection_results"]["cosas_a_recordar"]["value"] = (
+        "Se cansa de estar mucho tiempo en casa.\nTiene un perro.\nTiene un perro"
+    )
+    post_webhook(client, json.dumps(payload).encode())
+
+    facts = sorted(f.fact for f in db_session.query(MemoryFact).all())
+    assert facts == ["Le cansa estar mucho tiempo en casa.", "Tiene un perro."]
+
+
+# --- Nombre en el login de prueba ---------------------------------------------
+
+
+def test_dev_auth_display_name(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    headers = {"X-Dev-User-Email": "laura@example.com"}
+    assert (
+        client.post("/api/sesiones", headers=headers).json()["dynamic_variables"]["nombre"]
+        == "Laura"
+    )
+
+    monkeypatch.setattr(get_settings(), "dev_auth_display_name", "Laurita")
+    variables = client.post("/api/sesiones", headers=headers).json()["dynamic_variables"]
+    assert variables["nombre"] == "Laurita"
+
+
+def test_webhook_marks_session_abandoned_before_check_in(client, db_session, voice_session):
+    # Se colgó tras el saludo: ni ánimo ni pautas. No debe usarse como memoria...
+    payload = json.loads(webhook_payload(voice_session.id))
+    payload["data"]["analysis"]["data_collection_results"]["animo_inicial"]["value"] = None
+    payload["data"]["analysis"]["data_collection_results"]["animo_final"]["value"] = None
+    payload["data"]["analysis"]["data_collection_results"]["riesgo_detectado"]["value"] = True
+    post_webhook(client, json.dumps(payload).encode())
+
+    db_session.refresh(voice_session)
+    assert voice_session.status == SessionStatus.ABANDONED
+    assert voice_session.summary is None
+    assert db_session.query(MemoryFact).count() == 0
+    # ...pero el riesgo se registra siempre.
+    assert voice_session.risk_flag is True
+    assert db_session.query(RiskEvent).count() == 1
+
+
+def test_abandoned_session_is_not_previous_memory(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    voice_session.status = SessionStatus.ABANDONED
+    voice_session.summary = "El agente saludó al usuario."
+    db_session.commit()
+
+    variables = client.post(
+        "/api/sesiones", headers={"X-Dev-User-Email": "laura@example.com"}
+    ).json()["dynamic_variables"]
+    assert variables["es_primera_sesion"] == "sí"
+    assert "saludó" not in variables["resumen_previo"]
+
+
+def test_webhook_mood_from_tool_has_priority(client, db_session, voice_session):
+    # La herramienta guardó 3 y 6; el análisis dice 5 y 7. Mandan las herramientas.
+    voice_session.mood_start, voice_session.mood_end = 3, 6
+    db_session.commit()
+    post_webhook(client, webhook_payload(voice_session.id))
+    db_session.refresh(voice_session)
+    assert (voice_session.mood_start, voice_session.mood_end) == (3, 6)
+
+
+@pytest.mark.parametrize("value", [0, 11, "nueve", True])
+def test_webhook_ignores_invalid_mood(client, db_session, voice_session, value):
+    payload = json.loads(webhook_payload(voice_session.id))
+    payload["data"]["analysis"]["data_collection_results"]["animo_inicial"]["value"] = value
+    post_webhook(client, json.dumps(payload).encode())
+    db_session.refresh(voice_session)
+    assert voice_session.mood_start is None
+
+
+def test_save_guideline_skips_pending_duplicate(client, db_session, voice_session):
+    body = {"session_id": voice_session.id, "texto": "Ir al gimnasio tres días por semana"}
+    client.post("/tools/guardar-pauta", json=body, headers=TOOL_HEADERS)
+    again = {**body, "texto": "ir al gimnasio tres dias por semana."}
+    response = client.post("/tools/guardar-pauta", json=again, headers=TOOL_HEADERS)
+
+    assert response.status_code == 200
+    assert "ya estaba pendiente" in response.json()["mensaje"]
+    assert db_session.query(Guideline).count() == 1
+
+
+def test_save_guideline_allows_repeating_a_reviewed_one(client, db_session, voice_session):
+    # Una pauta ya revisada (hecha) se puede volver a acordar: no está pendiente.
+    old = _previous_guideline(db_session, voice_session, "Caminar veinte minutos")
+    old.status = "done"
+    db_session.commit()
+    body = {"session_id": voice_session.id, "texto": "Caminar veinte minutos"}
+    client.post("/tools/guardar-pauta", json=body, headers=TOOL_HEADERS)
+    assert db_session.query(Guideline).count() == 2
+
+
+# --- Sesiones siguientes a un riesgo (SSA-12) -------------------------------------
+
+
+def _start(client):
+    return client.post("/api/sesiones", headers={"X-Dev-User-Email": "laura@example.com"}).json()[
+        "dynamic_variables"
+    ]
+
+
+def test_no_previous_risk(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    voice_session.status = SessionStatus.COMPLETED
+    db_session.commit()
+    assert _start(client)["riesgo_previo"] == "no"
+
+
+def test_risk_in_last_session(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    # El webhook aún no ha llegado (sigue en CREATED), pero la tool ya marcó el riesgo.
+    client.post(
+        "/tools/registrar-riesgo",
+        json={"session_id": voice_session.id, "motivo": "x"},
+        headers=TOOL_HEADERS,
+    )
+    assert _start(client)["riesgo_previo"] == "sí, en la última sesión"
+
+
+def test_failed_connection_does_not_hide_last_risk(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    voice_session.status = SessionStatus.COMPLETED
+    voice_session.risk_flag = True
+    voice_session.started_at = utcnow() - timedelta(days=2)
+    # Una sesión que se creó pero nunca llegó a hablar.
+    db_session.add(
+        VoiceSession(user_id=voice_session.user_id, started_at=utcnow() - timedelta(days=1))
+    )
+    db_session.commit()
+    assert _start(client)["riesgo_previo"] == "sí, en la última sesión"
+
+
+def test_recent_risk_not_in_last_session(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    voice_session.status = SessionStatus.COMPLETED
+    voice_session.risk_flag = True
+    voice_session.started_at = utcnow() - timedelta(days=10)
+    db_session.add(
+        VoiceSession(
+            user_id=voice_session.user_id,
+            status=SessionStatus.COMPLETED,
+            started_at=utcnow() - timedelta(days=3),
+        )
+    )
+    db_session.commit()
+    assert _start(client)["riesgo_previo"] == "sí, en las últimas semanas"
+
+
+def test_old_risk_is_forgotten(client, db_session, voice_session, monkeypatch):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    voice_session.status = SessionStatus.COMPLETED
+    voice_session.risk_flag = True
+    voice_session.started_at = utcnow() - timedelta(days=45)
+    db_session.add(
+        VoiceSession(
+            user_id=voice_session.user_id,
+            status=SessionStatus.COMPLETED,
+            started_at=utcnow() - timedelta(days=3),
+        )
+    )
+    db_session.commit()
+    assert _start(client)["riesgo_previo"] == "no"
+
+
+# --- Sin datos de riesgo en la memoria (SSA-49) ---------------------------------
+
+
+def _risk_payload(session_id: str, riesgo_detectado: bool) -> bytes:
+    payload = json.loads(webhook_payload(session_id))
+    results = payload["data"]["analysis"]["data_collection_results"]
+    results["cosas_a_recordar"]["value"] = (
+        "A veces piensa que no quiere seguir viviendo.\nTiene un perro"
+    )
+    results["riesgo_detectado"]["value"] = riesgo_detectado
+    payload["data"]["analysis"]["transcript_summary"] = "Expresó pensamientos suicidas."
+    return json.dumps(payload).encode()
+
+
+def test_risk_from_tool_keeps_no_memory(client, db_session, voice_session):
+    # La herramienta marcó el riesgo durante la llamada; el análisis no lo detecta.
+    client.post(
+        "/tools/registrar-riesgo",
+        json={"session_id": voice_session.id, "motivo": "x"},
+        headers=TOOL_HEADERS,
+    )
+    post_webhook(client, _risk_payload(voice_session.id, riesgo_detectado=False))
+
+    db_session.refresh(voice_session)
+    assert voice_session.status == SessionStatus.COMPLETED
+    assert voice_session.summary == webhooks.RISK_SESSION_SUMMARY
+    assert db_session.query(MemoryFact).count() == 0
+
+
+def test_risk_from_analysis_keeps_no_memory(client, db_session, voice_session):
+    # Nadie llamó a la herramienta: el riesgo llega en el mismo webhook.
+    post_webhook(client, _risk_payload(voice_session.id, riesgo_detectado=True))
+
+    db_session.refresh(voice_session)
+    assert voice_session.risk_flag is True
+    assert voice_session.summary == webhooks.RISK_SESSION_SUMMARY
+    assert "suicid" not in voice_session.summary
+    assert db_session.query(MemoryFact).count() == 0
+    assert db_session.query(RiskEvent).one().source == "post_call"
+
+
+def test_risk_session_keeps_moods(client, db_session, voice_session):
+    post_webhook(client, _risk_payload(voice_session.id, riesgo_detectado=True))
+    db_session.refresh(voice_session)
+    assert (voice_session.mood_start, voice_session.mood_end) == (5, 7)
+
+
+def test_next_session_after_risk_has_no_risk_details(
+    client, db_session, voice_session, monkeypatch
+):
+    monkeypatch.setattr(elevenlabs, "get_signed_url", lambda: "wss://example/signed")
+    post_webhook(client, _risk_payload(voice_session.id, riesgo_detectado=True))
+
+    variables = _start(client)
+    assert variables["riesgo_previo"] == "sí, en la última sesión"
+    assert "suicid" not in variables["resumen_previo"]
+    assert "seguir viviendo" not in variables["cosas_a_recordar"]

@@ -1,6 +1,6 @@
 # ADR-002: Base de datos y modelo de datos
 
-- **Estado:** Propuesto
+- **Estado:** Aceptado. Implementado y probado en el spike del ADR-001 (octubre de 2026)
 - **Fecha:** 12 de octubre de 2026
 - **Autor:** Juanjo
 - **Relacionado con:** [Visión y alcance](../vision-y-alcance.md) · [ADR-001](ADR-001-arquitectura-conversacion-voz.md) · [Infra 01](../infra/01-subdominios-y-sites.md)
@@ -199,9 +199,15 @@ Al empezar una sesión, el backend construye las variables dinámicas a partir d
 
 **Negativas y mitigaciones**
 
-- **Los campos cifrados no se pueden buscar ni filtrar** con SQL. Se acepta: nunca se busca por el contenido de un resumen o una pauta.
+- **Los campos cifrados no se pueden buscar ni filtrar** con SQL. Se acepta: nunca se busca por el contenido de un resumen o una pauta. Para evitar pautas y recuerdos duplicados, se descifran los del usuario y se comparan en Python; con decenas de filas por usuario el coste es despreciable.
 - **Perder `DATA_ENCRYPTION_KEY` equivale a perder esos datos.** La clave se guarda también en el gestor de contraseñas, fuera del servidor.
 - **MySQL es menos expresivo que PostgreSQL.** Para este modelo no se necesita nada que MySQL no tenga.
+
+## Ajustes tras el spike
+
+- `voice_sessions.status` usa también `abandoned`: una sesión que termina sin ánimo ni pautas (se colgó tras el saludo) no se usa como memoria. El riesgo detectado se registra igualmente.
+- `pautas_pendientes` lleva el id de cada pauta entre corchetes (`[7] Caminar…`) para que el agente la revise con `revisar-pauta`. Como ese id es un entero fácil de adivinar, el backend comprueba que la pauta es del mismo usuario que la sesión (regla 4).
+- Las pautas solo las crea `guardar-pauta`. El análisis post-llamada ya no las genera.
 
 ## Pendiente
 

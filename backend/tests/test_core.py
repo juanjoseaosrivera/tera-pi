@@ -67,3 +67,14 @@ class TestWebhookSignature:
     def test_malformed(self, header):
         with pytest.raises(InvalidSignatureError):
             verify_elevenlabs_signature(self.body, header, SECRET)
+
+
+def test_is_duplicate_fact():
+    from app.services.memory import is_duplicate_fact
+
+    known = ["Le cansa estar mucho tiempo en casa.", "Trabaja de noche"]
+    assert is_duplicate_fact("Se cansa de estar mucho tiempo en casa", known)
+    assert is_duplicate_fact("LE CANSA ESTAR MUCHO TIEMPO EN CASA", known)
+    assert is_duplicate_fact("  - ", known)  # vacío tras normalizar: no aporta nada
+    assert not is_duplicate_fact("Trabaja de día", known)
+    assert not is_duplicate_fact("Tiene un perro", known)

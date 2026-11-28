@@ -19,6 +19,7 @@ from app.api.deps import DbSession, load_session
 from app.core.security import require_tool_secret
 from app.db.models import (
     Guideline,
+    GuidelineStatus,
     RiskEvent,
     RiskSource,
     Scale,
@@ -26,6 +27,7 @@ from app.db.models import (
     ScaleResult,
 )
 from app.services import scales
+from app.services.memory import is_duplicate_fact
 
 router = APIRouter(
     prefix="/tools", tags=["server tools"], dependencies=[Depends(require_tool_secret)]
@@ -62,9 +64,52 @@ class GuidelineIn(BaseModel):
 @router.post("/guardar-pauta", response_model=ToolResult)
 def save_guideline(body: GuidelineIn, db: DbSession) -> ToolResult:
     session = load_session(db, body.session_id)
-    db.add(Guideline(user_id=session.user_id, session_id=session.id, text=body.texto.strip()))
+    text = body.texto.strip()
+
+    # Si ya hay una pauta pendiente que dice lo mismo, no se duplica. El texto está cifrado,
+    # así que se compara en Python (como los recuerdos), no en SQL.
+    pending = db.scalars(
+        select(Guideline.text).where(
+            Guideline.user_id == session.user_id, Guideline.status == GuidelineStatus.PENDING
+        )
+    ).all()
+    if is_duplicate_fact(text, list(pending)):
+        return ToolResult(
+            mensaje="Esa pauta ya estaba pendiente: no hace falta guardarla otra vez."
+        )
+
+    db.add(Guideline(user_id=session.user_id, session_id=session.id, text=text))
     db.commit()
     return ToolResult(mensaje="Pauta guardada.")
+
+
+class GuidelineReviewIn(BaseModel):
+    session_id: str
+    pauta_id: int
+    estado: Literal["done", "partial", "dropped"]
+
+
+@router.post("/revisar-pauta", response_model=ToolResult)
+def review_guideline(body: GuidelineReviewIn, db: DbSession) -> ToolResult:
+    """Marca cómo le fue a la persona con una pauta de una sesión anterior.
+
+    `pauta_id` es el número que el agente ve entre corchetes en {{pautas_pendientes}}.
+    Solo se aceptan pautas del mismo usuario que la sesión (ADR-002, regla 4): el id de una
+    pauta es un entero fácil de adivinar, a diferencia del UUID de la sesión.
+    """
+    session = load_session(db, body.session_id)
+    guideline = db.get(Guideline, body.pauta_id)
+    if guideline is None or guideline.user_id != session.user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pauta no encontrada")
+    if guideline.session_id == session.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Esa pauta se acaba de acordar: se revisa en la próxima sesión",
+        )
+    guideline.status = GuidelineStatus(body.estado)
+    guideline.reviewed_in_session_id = session.id
+    db.commit()
+    return ToolResult(mensaje="Revisión de la pauta guardada.")
 
 
 class RiskIn(BaseModel):
@@ -88,9 +133,8 @@ def register_risk(body: RiskIn, db: DbSession) -> ToolResult:
     # TODO: enviar una alerta (correo o Telegram) al responsable del proyecto.
     return ToolResult(
         mensaje=(
-            "Riesgo registrado. Sigue el protocolo de crisis: responde con calma, deja la "
-            "meditación y ofrece los recursos: 024 (atención a la conducta suicida, gratuito, "
-            "24 horas) y 112 si hay peligro inmediato."
+            "Riesgo registrado. Protocolo de crisis: deja la sesión y di ahora el texto fijo "
+            "del protocolo, completo (024 y 112), y pregunta si está a salvo. No cuelgues."
         )
     )
 

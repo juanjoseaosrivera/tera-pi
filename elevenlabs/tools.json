@@ -1,5 +1,5 @@
 {
-  "_comentario": "Server tools del agente. {API_BASE_URL} y {TOOL_SECRET_ID} los sustituye deploy_agent.py. El parámetro session_id sale de la variable dinámica, nunca del LLM.",
+  "_comentario": "Server tools del agente. {API_BASE_URL} y {TOOL_SECRET_ID} los sustituye deploy_agent.py. El parámetro session_id sale de la variable dinámica, nunca del LLM. interruption_mode=disable_during_tool: si la persona habla mientras se guarda un dato, el guardado no se cancela.",
   "tools": [
     {
       "type": "webhook",
@@ -45,12 +45,13 @@
             "valor"
           ]
         }
-      }
+      },
+      "interruption_mode": "disable_during_tool"
     },
     {
       "type": "webhook",
       "name": "guardar-pauta",
-      "description": "Guarda una pauta que la persona ha aceptado practicar hasta la próxima sesión. Una llamada por pauta.",
+      "description": "Guarda una pauta nueva que la persona ha aceptado practicar hasta la próxima sesión. Una llamada por pauta. No guardes una que ya esté en la lista de pautas pendientes.",
       "response_timeout_secs": 10,
       "execution_mode": "immediate",
       "pre_tool_speech": "off",
@@ -82,7 +83,56 @@
             "texto"
           ]
         }
-      }
+      },
+      "interruption_mode": "disable_during_tool"
+    },
+    {
+      "type": "webhook",
+      "name": "revisar-pauta",
+      "description": "Guarda cómo le fue a la persona con una pauta de una sesión anterior. Llámala para cada pauta pendiente en cuanto sepas cómo le fue. Si no la hizo pero quiere seguir intentándolo, NO la llames: la pauta sigue pendiente. 'dropped' solo si dice claramente que la deja.",
+      "response_timeout_secs": 10,
+      "execution_mode": "immediate",
+      "pre_tool_speech": "off",
+      "tool_error_handling_mode": "auto",
+      "api_schema": {
+        "url": "{API_BASE_URL}/tools/revisar-pauta",
+        "method": "POST",
+        "content_type": "application/json",
+        "request_headers": {
+          "X-Tool-Secret": {
+            "secret_id": "{TOOL_SECRET_ID}"
+          }
+        },
+        "request_body_schema": {
+          "type": "object",
+          "description": "",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "dynamic_variable": "session_id"
+            },
+            "pauta_id": {
+              "type": "integer",
+              "description": "El número entre corchetes que aparece delante de la pauta en la lista de pautas pendientes. Por ejemplo, 12 para '[12] Caminar veinte minutos'."
+            },
+            "estado": {
+              "type": "string",
+              "enum": [
+                "done",
+                "partial",
+                "dropped"
+              ],
+              "description": "'done' si la hizo; 'partial' si la hizo en parte o algunos días; 'dropped' solo si dice claramente que la deja. Si no la hizo pero quiere seguir, no llames a la herramienta."
+            }
+          },
+          "required": [
+            "session_id",
+            "pauta_id",
+            "estado"
+          ]
+        }
+      },
+      "interruption_mode": "disable_during_tool"
     },
     {
       "type": "webhook",
@@ -133,7 +183,8 @@
             "valor"
           ]
         }
-      }
+      },
+      "interruption_mode": "disable_during_tool"
     },
     {
       "type": "webhook",
@@ -170,7 +221,8 @@
             "motivo"
           ]
         }
-      }
+      },
+      "interruption_mode": "disable_during_tool"
     }
   ]
 }

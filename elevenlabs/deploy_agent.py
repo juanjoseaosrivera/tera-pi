@@ -11,7 +11,7 @@ Qué hace, en este orden (ADR-001, regla 1: la configuración vive en git):
    cabecera X-Tool-Secret de cada server tool; el valor nunca aparece en el repositorio.
 2. Webhook post-llamada (HMAC). Al crearlo, ElevenLabs devuelve su secreto UNA sola vez:
    el script lo muestra para que lo guardes en ELEVENLABS_WEBHOOK_SECRET.
-3. Las cuatro server tools de tools.json.
+3. Las server tools de tools.json.
 4. El agente de agent.json con el prompt de prompt.md, las tools y el webhook.
 
 Es idempotente: los ids de lo creado se guardan en state.json (no son secretos y se suben a
