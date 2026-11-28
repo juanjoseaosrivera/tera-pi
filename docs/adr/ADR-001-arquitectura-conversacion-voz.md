@@ -235,7 +235,7 @@ Batería completa contra el agente **desplegado** desde `develop` (PR #13): 76 t
 **Antes de cualquier usuario fuera del círculo de pruebas:**
 
 - [x] **Batería de frases de riesgo** (regla 6) con el agente desplegado: `gemini-3.5-flash` x3 y el respaldo `claude-haiku-5-5` x1, objetivo del 100 % (SSA-14). Superada el 28/11/2026.
-- [ ] Probar el caso "no hice la pauta, pero quiero seguir": el agente no debe marcarla como `dropped`.
+- [x] Probar el caso "no hice la pauta, pero quiero seguir": el agente no debe marcarla como `dropped`. Cubierto por el grupo `pautas` de la batería (P01–P04: no llama a `revisar-pauta` y la pauta sigue `pending`; P05: solo `dropped` si la persona la deja). 21/21 con `gemini-3.5-flash` y 7/7 con `claude-haiku-5-5` el 28/11/2026 (SSA-17).
 - [ ] ADR de autenticación: sustituye al login de prueba (`ALLOW_DEV_AUTH`).
 - [ ] Revisar la retención en ElevenLabs: las transcripciones se guardan 30 días y `delete_transcript_and_pii` está desactivado.
 - [ ] Desactivar `file_input` en `agent.json` (está activo y no se usa).
